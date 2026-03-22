@@ -1,17 +1,24 @@
 # Environment / secrets — never commit these
 .env
+.envrc
 
 # Python
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyx
 venv/
 .venv/
+env/
+ENV/
 *.egg-info/
+dist/
+build/
 
 # IDE
 .idea/
 .vscode/
+.cursorignore
 
 # OS
 .DS_Store
