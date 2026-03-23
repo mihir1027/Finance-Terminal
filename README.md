@@ -51,8 +51,8 @@ All services have free tiers — no payment required.
 | `FINNHUB_API_KEY` | [finnhub.io](https://finnhub.io) — click "Get free API key" |
 | `TWELVE_DATA_API_KEY` | [twelvedata.com](https://twelvedata.com) — click "Get your free API key" |
 | `FRED_API_KEY` | [fred.stlouisfed.org/docs/api/api_key.html](https://fred.stlouisfed.org/docs/api/api_key.html) |
-| `FMP_API_KEY` | [financialmodelingprep.com/developer/docs](https://site.financialmodelingprep.com/developer/docs) |
 | `MASSIVE_API_KEY` | Optional — leave blank if you don't have one |
+| `SEC_USER_AGENT` | Your name + email (e.g. `Jane Doe jane@example.com`) — required by the SEC to access EDGAR filings |
 
 ### 4. Configure your `.env` file
 

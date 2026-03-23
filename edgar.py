@@ -1,10 +1,14 @@
+import os
 import requests
 import pandas as pd
 
 # --- SEC REQUIRED HEADER ---
-# You MUST change this to your actual name and email, or the SEC will block you.
+# The SEC requires a User-Agent with your name and email to access EDGAR.
+# Set SEC_USER_AGENT in your .env file, e.g.:
+#   SEC_USER_AGENT=Jane Doe myemail@example.com
+_sec_agent = os.getenv("SEC_USER_AGENT", "FinanceTerminal user@example.com")
 SEC_HEADERS = {
-    'User-Agent': 'Mihir TerminalProject (mihir1027@gmail.com)'
+    'User-Agent': _sec_agent
 }
 
 
