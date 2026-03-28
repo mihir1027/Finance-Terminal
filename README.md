@@ -86,13 +86,22 @@ PROVIDER_VERBOSE=false
 
 > `.env` is listed in `.gitignore` — your keys are never committed or uploaded.
 
-### 5. Run the server
+### 5. Build the frontend
+
+```bash
+npm install
+npm run build
+```
+
+### 6. Run the server
 
 ```bash
 python app.py
 ```
 
-Then open **http://localhost:5000** in your browser.
+Then open **http://localhost:5001** in your browser.
+
+> **All API keys must be sourced and added to your `.env` file for the terminal to work.** Missing keys will cause data panels to show errors or return no data.
 
 ---
 
@@ -127,12 +136,17 @@ The app automatically falls back to the next provider if one fails or is rate-li
 ```
 finance-terminal/
 ├── app.py           # Flask backend — all API routes
-├── main.py          # CLI macro terminal
 ├── providers.py     # Multi-provider data fallback logic
 ├── config.py        # Loads API keys from .env
 ├── curves.py        # Yield curve and futures data
 ├── edgar.py         # SEC EDGAR filing integration
-├── index.html       # Frontend UI (Bloomberg-style)
+├── research.py      # Research utilities
+├── src/             # TypeScript/Vite frontend source
+│   ├── core/        # CLI, window manager, utilities
+│   ├── panels/      # All terminal panel modules
+│   └── styles/      # CSS stylesheets
+├── package.json
+├── vite.config.ts
 ├── requirements.txt
 ├── .env.example     # API key template
 └── .gitignore
