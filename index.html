@@ -236,6 +236,10 @@ table.fat tr:hover td{background:rgba(255,255,255,.02);}
 .cm-v{font-size:13px;font-weight:700;margin-top:2px;}
 .curve-cw{height:160px;padding:5px 8px;flex-shrink:0;position:relative;}
 .curve-note{padding:6px 10px;font-size:10px;color:var(--dim);border-top:1px solid var(--bdr);line-height:1.7;flex-shrink:0;}
+.commod-data-strip{display:flex;align-items:center;gap:6px;padding:6px 12px;background:#0a0a0a;border-top:1px solid #1a1a1a;flex-shrink:0;font-size:11px;font-family:'JetBrains Mono',monospace;white-space:nowrap;overflow:hidden;}
+.ds-lbl{color:#555;letter-spacing:.08em;text-transform:uppercase;}
+.ds-val{color:#e5e5e5;font-weight:700;}
+.ds-sep{color:#333;}
 
 /* ── NEWS ── */
 .ni{padding:7px 10px;border-bottom:1px solid #171717;cursor:pointer;}
@@ -246,13 +250,41 @@ table.fat tr:hover td{background:rgba(255,255,255,.02);}
 .ni-title{font-size:12px;color:var(--text);line-height:1.5;}
 .ni-sum{font-size:10px;color:var(--dim);line-height:1.6;margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 
-/* ── HDS ── */
-table.hdst{width:100%;border-collapse:collapse;font-size:9px;}
-table.hdst th{padding:3px 8px;text-align:right;color:var(--dim);font-size:10px;border-bottom:1px solid var(--bdr);font-weight:500;position:sticky;top:0;background:#0d0d0d;letter-spacing:.07em;}
-table.hdst th:first-child{text-align:left;}
-table.hdst td{padding:3px 8px;text-align:right;border-bottom:1px solid #171717;}
-table.hdst td:first-child{text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-table.hdst tr:hover td{background:rgba(255,255,255,.02);}
+/* ── HDS — Bloomberg CSHF style ── */
+.hds-wrap{display:flex;flex-direction:column;height:100%;overflow:hidden;background:#000;font-family:'JetBrains Mono','IBM Plex Mono',monospace;font-size:10px;color:#FFB000;}
+.hds-ribbon{background:#8B0000;padding:2px 8px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;}
+.hds-ribbon-tk{color:#FFB000;font-size:11px;font-weight:700;letter-spacing:.08em;}
+.hds-ribbon-ac{color:#fff;font-size:9px;display:flex;gap:16px;}
+.hds-ribbon-ac span{cursor:pointer;opacity:.85;}
+.hds-ribbon-ac span:hover{opacity:1;text-decoration:underline;}
+.hds-entity{padding:2px 8px;color:#00ffff;font-size:10px;letter-spacing:.06em;flex-shrink:0;border-bottom:1px solid #111;}
+.hds-tabs{display:flex;flex-wrap:wrap;padding:2px 6px;gap:0;flex-shrink:0;border-bottom:1px solid #111;}
+.hds-tab{color:#666;font-size:9px;cursor:pointer;padding:2px 8px;letter-spacing:.04em;border:1px solid transparent;}
+.hds-tab.active{color:#fff;background:#222;border-color:#444;}
+.hds-tab:hover:not(.active){color:#aaa;}
+.hds-filters{padding:3px 8px;display:flex;gap:8px;align-items:center;flex-shrink:0;border-bottom:1px solid #111;flex-wrap:wrap;}
+.hds-flabel{color:#FFB000;font-size:9px;white-space:nowrap;}
+.hds-finput{background:#111;border:1px solid #333;color:#fff;font-size:9px;font-family:inherit;padding:1px 4px;outline:none;min-width:0;}
+.hds-finput:focus{border-color:#FFB000;}
+.hds-insight{padding:2px 8px;color:#999;font-size:9px;flex-shrink:0;border-bottom:1px solid #111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.hds-insight b{color:#fff;}
+.hds-metrics{padding:2px 8px;display:flex;gap:16px;flex-shrink:0;border-bottom:1px solid #333;align-items:center;}
+.hds-metric{font-size:9px;color:#FFB000;}
+.hds-metric span{color:#fff;margin-left:3px;}
+.hds-count{margin-left:auto;font-size:9px;color:#555;padding-right:4px;}
+.hds-body{flex:1;overflow-y:auto;overflow-x:auto;min-height:0;}
+table.hdst{width:100%;border-collapse:collapse;font-size:10px;min-width:500px;}
+table.hdst thead th{background:#000;color:#FFB000;padding:2px 8px;text-align:right;border-bottom:2px solid #FFB000;position:sticky;top:0;z-index:2;white-space:nowrap;font-weight:600;letter-spacing:.05em;}
+table.hdst thead th:first-child{text-align:left;}
+table.hdst tbody tr:hover td{background:#0a0a0a;}
+table.hdst td{padding:2px 8px;text-align:right;border-bottom:1px solid #0a0a0a;white-space:nowrap;color:#FFB000;}
+table.hdst td:first-child{text-align:left;color:#fff;overflow:hidden;text-overflow:ellipsis;max-width:260px;}
+table.hdst td.hds-pos{color:#00FF00;}
+table.hdst td.hds-neg{color:#FF0000;}
+table.hdst td.hds-dim{color:#444;}
+.hds-footer{padding:3px 8px;display:flex;align-items:center;background:#000;border-top:1px solid #1a1a1a;flex-shrink:0;gap:6px;}
+.hds-footer-btn{color:#FFB000;cursor:pointer;border:1px solid #333;padding:1px 7px;font-size:9px;font-family:inherit;background:none;}
+.hds-footer-btn:hover{border-color:#FFB000;}
 
 /* ── ANR ── */
 .anr-consensus{display:flex;align-items:center;gap:14px;padding:8px 12px;border-bottom:1px solid var(--bdr);flex-shrink:0;}
@@ -564,7 +596,7 @@ table.fxm tr:hover td{filter:brightness(1.18);}
 // ══════════════════════════════════════════════
 //  GLOBALS
 // ══════════════════════════════════════════════
-const API = 'http://localhost:5000/api';
+const API = 'http://localhost:5001/api';
 let cmdHist = [], histIdx = -1, _histDraft = '';
 let charts  = {};      // canvas-id → Chart instance
 let ftimers = {};      // win-id → focus interval
@@ -626,6 +658,7 @@ const GLOBAL_CMDS=[
   {key:'NI',    desc:'News & Intelligence'},
   {key:'BIO',   desc:'Biography'},
   {key:'ECAL',  desc:'Earnings Calendar'},
+  {key:'RES',   desc:'Research Reports'},
   {key:'HELP',  desc:'Command Reference'},
   {key:'PDF',   desc:'Terminal Preferences'},
 ];
@@ -870,17 +903,32 @@ function runCmd(cmd){parseRun(cmd.toUpperCase());}
 })();
 
 // ── PARSER ─────────────────────────────────────
-const PURE=new Set(['HELP','WEI','GLCO','FX','MOST','EQS','GC','QM','SOVG','WB','GOVT','PRED','FISC','ECO','MAC','RATE','SOVM','CORP','MTGE','M-MKT','MUNI','PFD','PORT','GP','BIO','NI','ECAL','PDF','MODL','WCR']);
+const PURE=new Set(['HELP','WEI','GLCO','FX','MOST','EQS','GC','QM','SOVG','WB','GOVT','PRED','FISC','ECO','MAC','RATE','SOVM','CORP','MTGE','M-MKT','MUNI','PFD','PORT','GP','BIO','NI','ECAL','PDF','MODL','WCR','RES']);
 const SKIP=new Set(['US','EQ','UK','EU','ETF','CM','JP','CN','HK','CUR','OPT','FUT','IDX','ETC','GOV','CORP']);
 const TICKER_ALIAS={
   BITCOIN:'BTC-USD', BTC:'BTC-USD',
   ETHEREUM:'ETH-USD', ETH:'ETH-USD',
   SOLANA:'SOL-USD',  SOL:'SOL-USD',
 };
+const _COMMOD_CURVE_MAP={
+  GC:'gold',SI:'silver',PL:'platinum',HG:'copper',
+  CL:'crude',BZ:'brent',NG:'natgas',
+  ZW:'wheat',ZC:'corn',ZS:'soybeans',KC:'coffee',SB:'sugar'
+};
 function parseRun(raw){
   const pts=raw.trim().split(/\s+/);
   // Resolve crypto aliases on the first token
   if(TICKER_ALIAS[pts[0]])pts[0]=TICKER_ALIAS[pts[0]];
+
+  // Commodity curve shorthand: GC1, CL1, NG1, ZC1, etc.
+  if(pts.length===1 && /^([A-Z]{2,3})1$/.test(pts[0])){
+    const root=pts[0].slice(0,-1);
+    if(_COMMOD_CURVE_MAP[root]){
+      const key=_COMMOD_CURVE_MAP[root];
+      ow('gc',key,`GC · ${root} CURVE`,1020,700,(e,tk,id)=>doGc(e,id,tk));
+      return;
+    }
+  }
 
   // Pure commands with optional country argument: SOVG US, WB DE, GOVT JP, SOVM DE
   if(['SOVG','WB','GOVT','SOVM'].includes(pts[0])){
@@ -908,7 +956,7 @@ function dispatch(t,cmd,args){
     case'G':    return ow('g',   t,`G · ${t}`,   720,520,(e,tk,id)=>doG(e,tk,'D',id));
     case'GIP':  return ow('g',   t,`GIP · ${t}`, 720,520,(e,tk,id)=>doG(e,tk,'1',id));
     case'N':    return ow('n',   t,`N · ${t}`,   400,440,(e,tk)=>doN(e,tk));
-    case'HDS':  return ow('hds', t,`HDS · ${t}`, 520,380,(e,tk)=>doHds(e,tk));
+    case'HDS':  return ow('hds', t,`HDS · ${t}`, 680,420,(e,tk)=>doHds(e,tk));
     case'ANR':  return ow('anr', t,`ANR · ${t}`, 520,420,(e,tk)=>doAnr(e,tk));
     case'CF':   return ow('cf',  t,`CF · ${t}`,  520,380,(e,tk)=>doCf(e,tk));
     case'HP':   return ow('hp',  t,`HP · ${t}`,  500,380,(e,tk)=>doHp(e,tk));
@@ -924,7 +972,7 @@ function dispatch(t,cmd,args){
     case'MAC':  return ow('mon',null,'MAC · US MACROECONOMIC INDICATORS',960,600,(e,t,id)=>doMacro(e,id));
     case'RATE': return ow('mon',null,'RATE · KEY RATES MONITOR',480,640,(e)=>doRate(e));
     case'EQS':  return ow('mon', null,'EQS · EQUITY SCREENER',940,560,(e,t,wid)=>doEqs(e,wid));
-    case'GC':   return ow('gc',  null,'GC · CURVES',860,560,(e,tk,id)=>doGc(e,id));
+    case'GC':   return ow('gc',  t,'GC · CURVES',1020,700,(e,tk,id)=>doGc(e,id,tk));
     case'GP':   return ow('gp',  null,'GP · GRAPH PLOT',1060,580,(e,tk,id)=>doGp(e,id));
     case'SOVG': return args[0]
       ? ow('sovg', args[0].toUpperCase(), `SOVG · ${args[0].toUpperCase()}`, 680, 560, (e,tk,id)=>doSovgCountry(e, args[0].toUpperCase(), id))
@@ -946,6 +994,7 @@ function dispatch(t,cmd,args){
     case'QM':   return openQM();
     case'NI':   {const q=args.join(' ');return ow('bio',null,`NI · ${q||'INTELLIGENCE'}`,580,520,(e)=>doBio(e,q));}
     case'BIO':  {const q=args.join(' ');return ow('bio',null,`BIO · ${q||'RESEARCH'}`,580,520,(e)=>doBio(e,q));}
+    case'RES':  return openResPanel();
     case'HELP': return ow('help',null,'HELP · COMMAND REFERENCE',700,620,(e)=>doHelp(e));
     case'PDF':  return ow('pdf',null,'PDF · PREFERENCES DISPLAY FUNCTIONS',800,460,(e,t,id)=>doPdf(e,id));
     case'CORP':  return ow('ph',null,'CORP · CORPORATE BONDS',  420,280,(e)=>doPlaceholder(e,'CORP','Corporate bond market — not yet implemented'));
@@ -1922,17 +1971,151 @@ async function doN(el,tk){
   }catch(e){el.innerHTML=`<div class="err">Backend offline.<br>${e}</div>`;}
 }
 
+// ── HDS formatter (all computation in Python backend) ────────────────────────
+const hdsCalc = {
+  int: v => v == null ? '—' : (+v).toLocaleString('en-US', {maximumFractionDigits: 0}),
+
+  // $15.7B / $9.3B / $450.2M format
+  mktVal: v => {
+    if (v == null) return '—';
+    if (v >= 1e12) return '$' + (v/1e12).toFixed(1) + 'T';
+    if (v >= 1e9)  return '$' + (v/1e9).toFixed(1)  + 'B';
+    if (v >= 1e6)  return '$' + (v/1e6).toFixed(1)  + 'M';
+    if (v >= 1e3)  return '$' + (v/1e3).toFixed(1)  + 'K';
+    return '$' + hdsCalc.int(v);
+  },
+
+  sharesOut: v => {
+    if (v == null) return '—';
+    if (v >= 1e9) return (v/1e9).toFixed(1) + 'B';
+    if (v >= 1e6) return (v/1e6).toFixed(1) + 'M';
+    return hdsCalc.int(v);
+  },
+
+  // Change column: signed integer, green/red
+  changeTd: v => {
+    if (v == null) return '<td class="hds-dim">—</td>';
+    if (v > 0)    return `<td class="hds-pos">+${hdsCalc.int(v)}</td>`;
+    if (v < 0)    return `<td class="hds-neg">${hdsCalc.int(v)}</td>`;
+    return '<td>0</td>';
+  },
+
+  // Change % column: signed with % symbol, green/red
+  changePctTd: v => {
+    if (v == null) return '<td class="hds-dim">—</td>';
+    const s = v > 0 ? '+' : '';
+    const cls = v > 0 ? 'hds-pos' : (v < 0 ? 'hds-neg' : '');
+    return `<td class="${cls}">${s}${v.toFixed(2)}%</td>`;
+  },
+};
+
 // ── HDS ──
-async function doHds(el,tk){
-  el.style.cssText='display:flex;flex-direction:column;overflow:hidden;height:100%';
-  el.innerHTML=ld(`Holders: ${tk}`);
-  try{
-    const r=await fetch(`${API}/hds/${tk}`).then(x=>x.json());
-    if(!r.ok){el.innerHTML=`<div class="err">${r.error}</div>`;return;}
-    function mkT(rows){if(!rows.length)return'<div class="empty">No data</div>';const nk=Object.keys(rows[0]).find(k=>k.toLowerCase().includes('holder'))||Object.keys(rows[0])[0];const ks=Object.keys(rows[0]).filter(k=>k!==nk);const h=`<tr><th>INSTITUTION</th>${ks.map(k=>`<th>${k.toUpperCase()}</th>`).join('')}</tr>`;const b=rows.map(row=>{const cs=ks.map(k=>{const v=row[k];if(v==null)return'<td>—</td>';if(typeof v==='number')return`<td>${v>=1e9?(v/1e9).toFixed(2)+'B':v>=1e6?(v/1e6).toFixed(2)+'M':v.toLocaleString()}</td>`;return`<td>${v}</td>`;}).join('');return`<tr><td>${row[nk]||'—'}</td>${cs}</tr>`;}).join('');return`<table class="hdst"><thead>${h}</thead><tbody>${b}</tbody></table>`;}
-    let at=0;el.innerHTML=`<div class="fa-tabs"><button class="fat-btn active" onclick="window._hdt(0)">INSTITUTIONAL</button><button class="fat-btn" onclick="window._hdt(1)">MUTUAL FUNDS</button></div><div class="fa-body" id="hdbody">${mkT(r.institutional)}</div>`;
-    window._hdt=(i)=>{at=i;document.getElementById('hdbody').innerHTML=mkT(i===0?r.institutional:r.mutualFund);document.querySelectorAll('.fat-btn').forEach((b,j)=>b.classList.toggle('active',j===i));};
-  }catch(e){el.innerHTML=`<div class="err">Backend offline.<br>${e}</div>`;}
+async function doHds(el, tk) {
+  el.style.cssText='display:flex;flex-direction:column;overflow:hidden;height:100%;background:#000';
+  el.innerHTML = ld(`Loading Security Ownership: ${tk}…`);
+
+  try {
+    const r = await fetch(`${API}/hds/${tk}`).then(x => x.json());
+    if (!r.ok) { el.innerHTML = `<div class="err">${r.error}</div>`; return; }
+
+    let activeTab = 0, filterStr = '';
+    const uid = 'hds' + Date.now();
+
+    const floatRat = r.sharesOut && r.floatShares
+      ? (r.floatShares / r.sharesOut * 100).toFixed(1) + '%' : '—';
+    const siPct = r.shortPct ? (r.shortPct * 100).toFixed(2) + '%' : '—';
+
+    el.innerHTML = `
+    <div class="hds-wrap">
+      <div class="hds-ribbon">
+        <span class="hds-ribbon-tk">Holders ∂ ${tk} US</span>
+        <span class="hds-ribbon-ac">
+          <span>Export</span><span>Settings</span>
+        </span>
+      </div>
+      <div class="hds-tabs">
+        <span class="hds-tab active" data-t="0">Institutional</span>
+        <span class="hds-tab" data-t="1">Mutual Fund</span>
+      </div>
+      <div class="hds-filters">
+        <span class="hds-flabel">Search</span>
+        <input class="hds-finput" id="${uid}-q" placeholder="Filter holders…" style="width:140px" oninput="window._hdsfilt_${uid}(this.value)">
+        <div class="hds-metric" style="margin-left:auto">Shrs Out<span>${hdsCalc.sharesOut(r.sharesOut)}</span></div>
+        <div class="hds-metric">% Inst<span>${r.pctInst != null ? r.pctInst + '%' : '—'}</span></div>
+        <div class="hds-metric">Float<span>${floatRat}</span></div>
+        <div class="hds-metric">SI%<span>${siPct}</span></div>
+      </div>
+      <div class="hds-body" id="${uid}-body"></div>
+      <div class="hds-footer">
+        <button class="hds-footer-btn">↓ Export</button>
+        <button class="hds-footer-btn">📊 View as chart</button>
+        <span style="margin-left:auto;font-size:9px;color:#555" id="${uid}-count"></span>
+      </div>
+    </div>`;
+
+    el.querySelectorAll('.hds-tab[data-t]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        activeTab = +tab.dataset.t;
+        el.querySelectorAll('.hds-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        renderTable();
+      });
+    });
+
+    window[`_hdsfilt_${uid}`] = v => { filterStr = v; renderTable(); };
+
+    function renderTable() {
+      const body  = document.getElementById(`${uid}-body`);
+      const cntEl = document.getElementById(`${uid}-count`);
+      if (!body) return;
+
+      const src  = activeTab === 0 ? r.institutional : r.mutualFund;
+      // Only show rows with real value + shares data (no blanks)
+      const rows = (src || []).filter(row =>
+        row.value != null && row.shares != null &&
+        (!filterStr || row.name.toLowerCase().includes(filterStr.toLowerCase()))
+      );
+
+      if (cntEl) cntEl.textContent = `Showing ${rows.length} Results`;
+
+      if (!rows.length) {
+        body.innerHTML = '<div style="padding:16px;color:#444;font-size:10px">No holders on record</div>';
+        return;
+      }
+
+      // Only show CHANGE/CHANGE% columns if at least some rows have the data
+      const hasChange = rows.some(row => row.change != null);
+      // Only show %OUT if at least some rows have it
+      const hasPctOut = rows.some(row => row.pctOut != null);
+
+      const cols = ['HOLDER', 'VALUE', 'AMOUNT'];
+      if (hasPctOut) cols.push('% OUT');
+      if (hasChange) cols.push('CHANGE', 'CHANGE %');
+
+      const thead = `<tr>${cols.map((c,i) => `<th${i===0?' style="text-align:left"':''}>${c}</th>`).join('')}</tr>`;
+
+      const tbody = rows.map(row => {
+        let cells = `<td title="${row.name}">${row.name}</td>
+        <td>${hdsCalc.mktVal(row.value)}</td>
+        <td>${hdsCalc.int(row.shares)}</td>`;
+        if (hasPctOut) {
+          const pct = row.pctOut != null ? (row.pctOut * 100).toFixed(2) + '%' : '<span style="color:#333">—</span>';
+          cells += `<td>${pct}</td>`;
+        }
+        if (hasChange) {
+          cells += hdsCalc.changeTd(row.change) + hdsCalc.changePctTd(row.changePct);
+        }
+        return `<tr>${cells}</tr>`;
+      }).join('');
+
+      body.innerHTML = `<table class="hdst"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+    }
+
+    renderTable();
+
+  } catch(e) {
+    el.innerHTML = `<div class="err">Backend offline.<br>${e}</div>`;
+  }
 }
 
 // ── ANR ──
@@ -2739,7 +2922,9 @@ async function _renderPerfWin(el,wid,cfg){
         extraHdr=`<th style="font-size:9px;letter-spacing:.03em">${lbl}</th>`;
         getExtra=(sym)=>`<td class="glco-num">${pctFmt(ws.customPerf?.perfs?.[sym]??null)}</td>`;
       }
-      const totalCols=5+(extraHdr?1:0);
+      const tickerHdr=cfg.tickerCol?'<th style="color:#888">TICKER</th>':'';
+      const getTicker=cfg.tickerCol?(c)=>`<td class="glco-num" style="color:#FFB000;letter-spacing:.04em">${c.activeTicker||'—'}</td>`:()=>'';
+      const totalCols=5+(extraHdr?1:0)+(tickerHdr?1:0);
       let rows='';
       for(const g of cfg.groups){
         const gItems=g.keys?g.keys.map(k=>map[k]).filter(Boolean):items.filter(c=>c.category===g.key);
@@ -2748,12 +2933,12 @@ async function _renderPerfWin(el,wid,cfg){
         for(const c of gItems){
           const d=cd(c.changePct),s=(c.change||0)>=0?'+':'';
           const dec=cfg.priceDecimals;
-          rows+=`<tr><td class="glco-name">${c.name}</td><td class="glco-num">${fp(c.price,dec)}</td><td class="glco-num ${d}">${c.change!=null?s+fp(c.change,dec):'—'}</td><td class="glco-num">${pctFmt(c.changePct)}</td><td class="glco-num">${pctFmt(c.ytdPct)}</td>${getExtra(c.sym)}</tr>`;
+          rows+=`<tr><td class="glco-name">${c.name}</td>${getTicker(c)}<td class="glco-num">${fp(c.price,dec)}</td><td class="glco-num ${d}">${c.change!=null?s+fp(c.change,dec):'—'}</td><td class="glco-num">${pctFmt(c.changePct)}</td><td class="glco-num">${pctFmt(c.ytdPct)}</td>${getExtra(c.sym)}</tr>`;
         }
       }
       const body=el.querySelector(`#${pid}-body`);
       if(!body||ws.rv!==rv)return;
-      body.innerHTML=`<div style="flex:1;overflow-y:auto"><table class="glco-tbl"><thead><tr><th>${cfg.colLabel}</th><th>PRICE</th><th>DAY CHG</th><th>DAY %</th><th>YTD %</th>${extraHdr}</tr></thead><tbody>${rows}</tbody></table></div>`;
+      body.innerHTML=`<div style="flex:1;overflow-y:auto"><table class="glco-tbl"><thead><tr><th>${cfg.colLabel}</th>${tickerHdr}<th>PRICE</th><th>DAY CHG</th><th>DAY %</th><th>YTD %</th>${extraHdr}</tr></thead><tbody>${rows}</tbody></table></div>`;
     }catch(e){const b=el.querySelector(`#${pid}-body`);if(b&&ws.rv===rv)b.innerHTML=`<div class="err">Backend offline.<br>${e}</div>`;}
   }
   await render();
@@ -2763,7 +2948,7 @@ async function _renderPerfWin(el,wid,cfg){
 async function doGlco(el,wid){
   await _renderPerfWin(el,wid,{
     dataUrl:`${API}/glco`, periodsUrl:`${API}/glco/periods`, perfUrl:`${API}/glco/perf`,
-    symKey:'commodities', colLabel:'COMMODITY', priceDecimals:null,
+    symKey:'commodities', colLabel:'COMMODITY', priceDecimals:null, tickerCol:true,
     groups:[{label:'METALS',key:'METALS'},{label:'ENERGY',key:'ENERGY'},{label:'AGRICULTURE',key:'AGRI'}],
   });
 }
@@ -4495,14 +4680,14 @@ async function doEqs(el, wid){
 //  ✓ Ascending duration order
 //  ✓ Commodity forward curves (contango/backwardation)
 // ══════════════════════════════════════════════
-async function doGc(el,wid){
+async function doGc(el,wid,preTab){
   el.style.cssText='display:flex;flex-direction:column;overflow:hidden;height:100%';
 
   // Duration order for treasury display
   const TENOR_ORDER=['1M','2M','3M','6M','1Y','2Y','3Y','5Y','7Y','10Y','20Y','30Y'];
-  const COMMOD_KEYS=['crude','gold','natgas','corn','wheat','soybeans','copper','silver'];
-  const COMMOD_LABELS={crude:'CRUDE',gold:'GOLD','natgas':'NAT GAS',corn:'CORN',wheat:'WHEAT',soybeans:'SOYBEANS',copper:'COPPER',silver:'SILVER'};
-  const COMMOD_COLORS={crude:'#fbbf24',gold:'#f59e0b','natgas':'#60a5fa',corn:'#86efac',wheat:'#d1d5db',soybeans:'#a3e635',copper:'#fb923c',silver:'#94a3b8'};
+  const COMMOD_KEYS=['crude','brent','natgas','gold','silver','platinum','copper','wheat','corn','soybeans','coffee','sugar'];
+  const COMMOD_LABELS={crude:'WTI CRUDE',brent:'BRENT',natgas:'NAT GAS',gold:'GOLD',silver:'SILVER',platinum:'PLATINUM',copper:'COPPER',wheat:'WHEAT',corn:'CORN',soybeans:'SOYBEANS',coffee:'COFFEE',sugar:'SUGAR'};
+  const COMMOD_COLORS={crude:'#fbbf24',brent:'#f59e0b',natgas:'#60a5fa',gold:'#FFD700',silver:'#c0c0c0',platinum:'#e2e8f0',copper:'#fb923c',wheat:'#d1d5db',corn:'#86efac',soybeans:'#a3e635',coffee:'#92400e',sugar:'#fbcfe8'};
 
   let active='TREASURY';
 
@@ -4665,38 +4850,155 @@ async function doGc(el,wid){
   async function renderCommod(key){
     const tbody=document.getElementById('gc-body');if(!tbody)return;
     const lbl=COMMOD_LABELS[key],col=COMMOD_COLORS[key];
-    tbody.innerHTML=ld(`Fetching ${lbl} forward curve…`);
+    tbody.innerHTML=ld(`Loading ${lbl} futures curve…`);
+    const EIA_KEYS=['crude','brent','natgas'];
+    const AGRI_KEYS=['corn','wheat','soybeans','sugar'];
+    const AGRI_NAME_MAP={corn:'Corn',wheat:'Wheat',soybeans:'Soybeans',sugar:'Sugar'};
     try{
-      const r=await fetch(`${API}/commodity_curve/${key}`).then(x=>x.json());
-      if(!r.ok){tbody.innerHTML=`<div class="err">${r.error}<br><span style="color:var(--dim)">Extended futures may require a data subscription. Try another commodity.</span></div>`;return;}
-      const pts=r.points,labels=pts.map(p=>p.label),data=pts.map(p=>p.price);
-      const isC=r.isContango;
+      const [r,extraData]=await Promise.all([
+        fetch(`${API}/commodity_curve/${key}`).then(x=>x.json()),
+        EIA_KEYS.includes(key)  ? fetch(`${API}/energy`).then(x=>x.json()) :
+        AGRI_KEYS.includes(key) ? fetch(`${API}/agri`).then(x=>x.json())   :
+        Promise.resolve(null),
+      ]);
+      if(!r.ok){tbody.innerHTML=`<div class="err">${r.error}</div>`;return;}
+      const pts=r.points;
+      if(!pts||!pts.length){tbody.innerHTML=`<div class="err">No contract data available.</div>`;return;}
       const sp=r.spreadPct;
       const cid=`gc-commod-${wid}`;
+
+      // KPI strip
+      const spHtml=sp!=null
+        ?`<span style="color:${sp>0?'#f87171':'#4ade80'}">${sp>0?'+':''}${sp}%</span>`
+        :'—';
+
+      // Data strip (EIA or AGRI, conditional)
+      let dataStripHtml='';
+      if(EIA_KEYS.includes(key)&&extraData?.ok){
+        if(key==='natgas'){
+          const g=extraData.gasStorage;
+          const wowCol=g.wowChange<0?'#4ade80':'#f87171';
+          const surpCol=g.surplus>0?'#4ade80':'#f87171';
+          dataStripHtml=`<div class="commod-data-strip"><span class="ds-lbl">GAS STORAGE</span><span class="ds-val">${g.value?.toLocaleString()} BCF</span><span class="ds-sep">·</span><span class="ds-lbl">WoW</span><span style="color:${wowCol}">${g.wowChange>=0?'+':''}${g.wowChange} BCF</span><span class="ds-sep">·</span><span class="ds-lbl">vs 5yr avg</span><span style="color:${surpCol}">${g.surplus>=0?'+':''}${g.surplus} BCF</span></div>`;
+        }else{
+          const c=extraData.crude;
+          const wowCol=c.wowChange<0?'#4ade80':'#f87171';
+          const surpCol=c.surplus>0?'#4ade80':'#f87171';
+          dataStripHtml=`<div class="commod-data-strip"><span class="ds-lbl">CRUDE INV</span><span class="ds-val">${c.value?.toFixed(1)} Mbbl</span><span class="ds-sep">·</span><span class="ds-lbl">WoW</span><span style="color:${wowCol}">${c.wowChange>=0?'+':''}${c.wowChange} Mbbl</span><span class="ds-sep">·</span><span class="ds-lbl">vs 5yr avg</span><span style="color:${surpCol}">${c.surplus>=0?'+':''}${c.surplus} Mbbl</span></div>`;
+        }
+      }else if(AGRI_KEYS.includes(key)&&extraData?.ok){
+        const agriName=AGRI_NAME_MAP[key];
+        const item=extraData.commodities?.find(c=>c.name===agriName);
+        if(item){
+          const yoyCol=(item.yoy??0)>=0?'#4ade80':'#f87171';
+          const momCol=(item.mom??0)>=0?'#4ade80':'#f87171';
+          const dateStr=item.date?item.date.slice(0,7):'';
+          dataStripHtml=`<div class="commod-data-strip"><span class="ds-lbl">WORLD BANK</span><span class="ds-val">$${item.price} / ${item.unit}</span><span class="ds-sep">·</span><span class="ds-lbl">YoY</span><span style="color:${yoyCol}">${item.yoy>=0?'+':''}${item.yoy}%</span><span class="ds-sep">·</span><span class="ds-lbl">MoM</span><span style="color:${momCol}">${item.mom>=0?'+':''}${item.mom}%</span><span class="ds-sep">·</span><span class="ds-lbl" style="color:#555">${dateStr}</span></div>`;
+        }
+      }
+
+      // Table rows
+      const fmtChgCell=(v,pct)=>{
+        if(v==null)return`<td class="glco-num" style="color:#333">—</td><td class="glco-num" style="color:#333">—</td>`;
+        const s=v>=0?'+':'';
+        const cl=v>=0?'up':'down';
+        return`<td class="glco-num ${cl}">${s}${v.toFixed(2)}</td><td class="glco-num ${cl}">${pct!=null?s+pct.toFixed(2)+'%':'—'}</td>`;
+      };
+      const fmtOi=(v)=>v!=null
+        ?`<td class="glco-num">${v>=1000?(v/1000).toFixed(0)+'K':v}</td>`
+        :`<td class="glco-num" style="color:#333">—</td>`;
+
+      const trows=pts.map((p,i)=>`<tr${i===0?` style="background:#0d1a0d"`:''}>`+
+        `<td style="padding:2px 8px;color:${col};font-weight:600;white-space:nowrap;font-size:11px">${p.label}</td>`+
+        `<td class="glco-num" style="font-size:11px">${fp(p.price)}</td>`+
+        fmtChgCell(p.change,p.changePct)+
+        fmtOi(p.oi)+
+        `</tr>`).join('');
+
       tbody.innerHTML=`
-        <div class="curve-metrics" style="grid-template-columns:repeat(3,1fr)">
-          <div class="cm-cell"><div class="cm-k">SPOT PRICE</div><div class="cm-v" style="color:${col}">${fp(data[0])}</div></div>
-          <div class="cm-cell"><div class="cm-k">FARTHEST CONTRACT</div><div class="cm-v" style="color:${col}">${pts.length>1?fp(data[data.length-1]):'—'}</div></div>
-          <div class="cm-cell"><div class="cm-k">STRUCTURE</div><div class="cm-v ${isC?'down':'up'}">${r.structure}</div></div>
+        <div class="curve-metrics" style="grid-template-columns:repeat(4,1fr);flex-shrink:0">
+          <div class="cm-cell"><div class="cm-k">FRONT · ${pts[0].label}</div><div class="cm-v" style="color:${col};font-size:15px">${fp(pts[0].price)}</div></div>
+          <div class="cm-cell"><div class="cm-k">BACK · ${pts[pts.length-1].label}</div><div class="cm-v" style="color:${col};font-size:15px">${pts.length>1?fp(pts[pts.length-1].price):'—'}</div></div>
+          <div class="cm-cell"><div class="cm-k">SPREAD</div><div class="cm-v" style="font-size:15px">${spHtml}</div></div>
+          <div class="cm-cell"><div class="cm-k">CONTRACTS</div><div class="cm-v" style="font-size:15px">${pts.length}</div></div>
         </div>
-        <div class="curve-cw"><canvas id="${cid}"></canvas></div>
-        <div class="curve-note">
-          <b>${lbl}</b> forward curve · ${r.unit}<br>
-          <b style="color:${isC?'var(--red)':'var(--green)'}">${r.structure}</b>: ${r.structureNote}
-          ${sp!=null?` Spot→far spread: <b style="color:${sp>0?'var(--red)':'var(--green)'}">${sp>0?'+':''}${sp}%</b>`:''}
-        </div>
-      `;
-      mkChart(cid,labels,data,col,'');
+        ${dataStripHtml}
+        <div style="padding:4px 10px 2px;font-size:9px;color:#555;letter-spacing:.1em;flex-shrink:0">${lbl} FUTURES CHAIN · ${r.unit}</div>
+        <div style="flex:1;position:relative;min-height:300px;padding:0 8px 4px"><canvas id="${cid}" style="position:absolute;inset:0"></canvas></div>
+        <div style="flex:0 0 auto;max-height:180px;overflow-y:auto;border-top:1px solid #141414">
+          <table class="glco-tbl" style="width:100%">
+            <thead><tr><th style="text-align:left;padding-left:8px">CONTRACT</th><th>LAST</th><th>CHG</th><th>CHG %</th><th>OI</th></tr></thead>
+            <tbody>${trows}</tbody>
+          </table>
+        </div>`;
+
+      // Bloomberg-style connected dot curve
+      requestAnimationFrame(()=>{
+        dc(cid);
+        const ctx=document.getElementById(cid)?.getContext('2d');if(!ctx)return;
+        charts[cid]=new Chart(ctx,{
+          type:'line',
+          data:{labels:pts.map(p=>p.label),datasets:[{
+            data:pts.map(p=>p.price),
+            borderColor:col,
+            borderWidth:3,
+            pointRadius:9,
+            pointHoverRadius:13,
+            pointBackgroundColor:col,
+            pointBorderColor:'#000',
+            pointBorderWidth:2,
+            fill:false,
+            tension:0.2,
+          }]},
+          options:{
+            responsive:true,maintainAspectRatio:false,
+            layout:{padding:{top:16,right:24,bottom:10,left:10}},
+            plugins:{
+              legend:{display:false},
+              tooltip:{
+                backgroundColor:'#0d0d0d',borderColor:'#333',borderWidth:1,
+                titleColor:col,bodyColor:'#ccc',
+                titleFont:{family:'JetBrains Mono',size:12,weight:'bold'},
+                bodyFont:{family:'JetBrains Mono',size:13},
+                padding:12,
+                callbacks:{
+                  title:c=>`  ${c[0].label}`,
+                  label:c=>{
+                    const p=pts[c.dataIndex];
+                    const lines=[`  Price: ${fp(p.price)} ${r.unit}`];
+                    if(p.change!=null)lines.push(`  Chg:   ${p.change>=0?'+':''}${p.change.toFixed(2)} (${p.changePct?.toFixed(2)||'—'}%)`);
+                    if(p.oi!=null)lines.push(`  OI:    ${p.oi.toLocaleString()}`);
+                    return lines;
+                  },
+                },
+              },
+            },
+            scales:{
+              x:{
+                grid:{color:'#141414'},
+                ticks:{color:'#aaa',font:{family:'JetBrains Mono',size:12},maxRotation:0},
+                border:{color:'#252525'},
+              },
+              y:{
+                grid:{color:'#141414'},
+                ticks:{color:'#aaa',font:{family:'JetBrains Mono',size:12},callback:v=>(+v).toFixed(1)},
+                border:{color:'#252525'},
+              },
+            },
+            animation:{duration:200},
+          },
+        });
+      });
     }catch(e){tbody.innerHTML=`<div class="err">Backend offline.<br>${e}</div>`;}
   }
 
   // Build tab bar
   el.innerHTML=`
-    <div class="ctabs" id="gc-tabs-${wid}">
+    <div class="ctabs" id="gc-tabs-${wid}" style="flex-wrap:wrap">
       <button class="pb active" data-c="TREASURY" onclick="window._gct_${wid}('TREASURY')">US TREASURY</button>
       ${COMMOD_KEYS.map(k=>`<button class="pb" data-c="${k}" onclick="window._gct_${wid}('${k}')">${COMMOD_LABELS[k]}</button>`).join('')}
     </div>
-    <div id="gc-body" style="flex:1;overflow:auto;display:flex;flex-direction:column">${ld('Loading…')}</div>
+    <div id="gc-body" style="flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0">${ld('Loading…')}</div>
   `;
 
   window[`_gct_${wid}`]=(c)=>{
@@ -4705,7 +5007,9 @@ async function doGc(el,wid){
     document.querySelectorAll(`#gc-tabs-${wid} .pb`).forEach(b=>b.classList.toggle('active',b.dataset.c===c));
     if(c==='TREASURY')renderTreasury();else renderCommod(c);
   };
-  renderTreasury();
+
+  if(preTab && COMMOD_KEYS.includes(preTab)) window[`_gct_${wid}`](preTab);
+  else renderTreasury();
 }
 
 // ══════════════════════════════════════════════
@@ -5704,6 +6008,248 @@ function doPdf(el,wid){
   }
 
   render();
+}
+
+// ── RES — Research Reports (full-desktop overlay panel) ──
+function openResPanel(){
+  const PANEL_ID='res-panel';
+  const existing=document.getElementById(PANEL_ID);
+  if(existing){ existing.remove(); return; }
+
+  const CAT_LABEL={
+    central_bank:'CENTRAL BANK', asset_manager:'ASSET MANAGER',
+    quant_hf:'QUANT / HF',       pe_credit:'PE / CREDIT',
+    academic:'ACADEMIC',          multilateral:'MULTILATERAL',
+    bank:'BANK',
+  };
+
+  const desk=document.getElementById('desktop');
+  const panel=document.createElement('div');
+  panel.id=PANEL_ID;
+  // Same top-border orange accent as .win-bar; fills desktop completely
+  panel.style.cssText=[
+    'position:absolute;inset:0;z-index:180;overflow:hidden',
+    'display:flex;flex-direction:column',
+    'background:var(--bg);',
+    'border-top:2px solid rgba(240,140,0,0.75)',
+    'animation:resFadeIn .15s ease',
+  ].join(';');
+
+  const ctrlStyle='background:var(--bg);border:1px solid var(--bdr);color:var(--dim);padding:3px 7px;font-size:10px;font-family:var(--font);outline:none;cursor:pointer';
+
+  panel.innerHTML=`
+    <style>
+      @keyframes resFadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+      .res-row{cursor:pointer;border-bottom:1px solid var(--bg2);}
+      .res-row:hover .res-title{color:var(--text);}
+      .res-row:hover{background:var(--bg1);}
+      .res-row.res-active{background:var(--bg1);border-left:2px solid var(--orange);}
+      .res-row.res-active .res-title{color:var(--text);}
+      .res-row.res-active .res-inst{color:var(--orange);}
+    </style>
+
+    <!-- TOP BAR: matches .win-bar height and font -->
+    <div style="height:28px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;background:#0c0c0c;border-bottom:1px solid var(--bdr);flex-shrink:0">
+      <span style="font-size:11px;font-weight:600;color:var(--orange);letter-spacing:.08em">RES · RESEARCH REPORTS</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span id="res-ts" style="font-size:9px;color:var(--muted);letter-spacing:.05em"></span>
+        <div class="wb x" onclick="document.getElementById('${PANEL_ID}').remove()" title="Close">✕</div>
+      </div>
+    </div>
+
+    <!-- BODY: left list + right viewer -->
+    <div style="display:flex;flex:1;overflow:hidden;min-height:0">
+
+      <!-- LEFT COLUMN -->
+      <div style="width:340px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--bdr);background:var(--bg);overflow:hidden">
+
+        <!-- Search + filter strip -->
+        <div style="padding:6px 8px;border-bottom:1px solid var(--bdr);display:flex;flex-direction:column;gap:4px;background:#0c0c0c;flex-shrink:0">
+          <input id="res-q" placeholder="Search…" style="${ctrlStyle};width:100%;border-color:var(--bdr)"/>
+          <div style="display:flex;gap:4px">
+            <select id="res-cat" style="${ctrlStyle};flex:1">
+              <option value="">ALL CATEGORIES</option>
+              <option value="central_bank">CENTRAL BANK</option>
+              <option value="asset_manager">ASSET MANAGER</option>
+              <option value="quant_hf">QUANT / HF</option>
+              <option value="pe_credit">PE / CREDIT</option>
+              <option value="academic">ACADEMIC</option>
+              <option value="multilateral">MULTILATERAL</option>
+              <option value="bank">BANK</option>
+            </select>
+            <select id="res-inst" style="${ctrlStyle};flex:1;max-width:130px"><option value="">ALL SOURCES</option></select>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <button id="res-ref" style="${ctrlStyle};letter-spacing:.08em" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--dim)'">↻ REFRESH</button>
+            <span id="res-count" style="font-size:9px;color:var(--muted)"></span>
+          </div>
+        </div>
+
+        <!-- Paper list -->
+        <div style="flex:1;overflow-y:auto">
+          <div id="res-body"></div>
+          <div id="res-empty" style="display:none;padding:24px 12px;color:var(--muted);font-size:10px;letter-spacing:.1em">NO RESULTS</div>
+        </div>
+      </div>
+
+      <!-- RIGHT COLUMN: pdf viewer -->
+      <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)">
+
+        <!-- PDF title bar — hidden until paper selected -->
+        <div id="res-pdf-bar" style="height:28px;display:none;align-items:center;justify-content:space-between;padding:0 10px;background:#0c0c0c;border-bottom:1px solid var(--bdr);flex-shrink:0">
+          <span id="res-pdf-title" style="font-size:10px;color:var(--dim);letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;margin-right:12px"></span>
+          <span id="res-pdf-src" style="font-size:9px;color:var(--muted);letter-spacing:.06em;white-space:nowrap"></span>
+        </div>
+
+        <!-- Viewer area -->
+        <div id="res-viewer" style="flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden">
+          <div style="text-align:center;color:var(--muted);font-size:9px;letter-spacing:.14em;line-height:2.4;user-select:none;opacity:.35">
+            SELECT A PAPER<br>TO VIEW
+          </div>
+        </div>
+      </div>
+
+    </div>`;
+
+  desk.appendChild(panel);
+
+  const g=(id)=>document.getElementById(id);
+
+  document.addEventListener('keydown',function esc(e){
+    if(e.key==='Escape'&&document.getElementById(PANEL_ID)){ panel.remove(); document.removeEventListener('keydown',esc); }
+  });
+
+  let _allPapers=[], _cachedAt=0, _tsTimer=null, _activeRow=null, _filtered=[];
+
+  function fmtDate(d){
+    if(!d) return '';
+    const m=d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m?`${m[2]}/${m[3]}/${m[1].slice(2)}`:d.slice(0,10);
+  }
+
+  function fmtAgo(ts){
+    if(!ts) return '';
+    const s=Math.floor((Date.now()/1000)-ts);
+    if(s<60) return 'LIVE';
+    if(s<3600) return `${Math.floor(s/60)}M AGO`;
+    return `${Math.floor(s/3600)}H AGO`;
+  }
+
+  function buildInstDropdown(papers){
+    const names=[...new Set(papers.map(p=>p.institution))].sort();
+    const dd=g('res-inst');
+    if(!dd) return;
+    const cur=dd.value;
+    dd.innerHTML=`<option value="">ALL SOURCES</option>`+names.map(n=>`<option value="${n}"${n===cur?' selected':''}>${n.toUpperCase()}</option>`).join('');
+  }
+
+  function openPdf(paper){
+    // Update PDF title bar
+    const bar=g('res-pdf-bar');
+    if(bar){
+      bar.style.display='flex';
+      const tEl=g('res-pdf-title'); if(tEl) tEl.textContent=paper.title;
+      const sEl=g('res-pdf-src');   if(sEl) sEl.textContent=paper.institution.toUpperCase()+(paper.date?' · '+fmtDate(paper.date):'');
+    }
+    const viewer=g('res-viewer');
+    if(!viewer) return;
+    if(paper.pdf_url){
+      const proxyUrl=`${API}/res/pdf?url=${encodeURIComponent(paper.pdf_url)}`;
+      // Wrap iframe in a container that gives it terminal-style inset border
+      viewer.innerHTML=`
+        <div style="width:100%;height:100%;padding:0;position:relative">
+          <iframe src="${proxyUrl}"
+            style="width:100%;height:100%;border:none;display:block"
+            title="${paper.title.replace(/"/g,'&quot;')}">
+          </iframe>
+        </div>`;
+    } else {
+      viewer.innerHTML=`
+        <div style="text-align:center;color:var(--muted);font-size:10px;letter-spacing:.1em;line-height:2.6;opacity:.5">
+          NO PDF AVAILABLE FOR THIS PAPER<br>
+          <span style="font-size:9px;color:var(--muted);letter-spacing:.06em;cursor:pointer;text-decoration:underline;text-underline-offset:3px"
+            onclick="window.open('${paper.url}','_blank')">VIEW SOURCE PAGE ↗</span>
+        </div>`;
+    }
+  }
+
+  function render(){
+    const q=(g('res-q')?.value||'').trim().toLowerCase();
+    const cat=g('res-cat')?.value||'';
+    const inst=g('res-inst')?.value||'';
+    _filtered=_allPapers;
+    if(q) _filtered=_filtered.filter(p=>p.title.toLowerCase().includes(q)||(p.summary||'').toLowerCase().includes(q));
+    if(cat) _filtered=_filtered.filter(p=>p.category===cat);
+    if(inst) _filtered=_filtered.filter(p=>p.institution===inst);
+
+    const body=g('res-body');
+    const empty=g('res-empty');
+    const count=g('res-count');
+    if(!body) return;
+
+    if(count) count.textContent=_filtered.length+' RESULTS';
+
+    if(!_filtered.length){
+      body.innerHTML='';
+      if(empty) empty.style.display='block';
+      return;
+    }
+    if(empty) empty.style.display='none';
+
+    body.innerHTML=_filtered.map((p,i)=>{
+      const safeT=p.title.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const pdfTag=p.pdf_url
+        ?`<span style="font-size:8px;color:var(--green);letter-spacing:.1em;border:1px solid rgba(74,222,128,.25);padding:1px 4px;margin-left:auto;flex-shrink:0">PDF</span>`
+        :'';
+      return `<div class="res-row" data-idx="${i}" style="padding:9px 10px 8px 12px">
+        <div class="res-title" style="font-size:12px;color:var(--dim);line-height:1.45;margin-bottom:4px">${safeT}</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="res-inst" style="font-size:9px;color:var(--muted);letter-spacing:.07em">${p.institution.toUpperCase()}</span>
+          <span style="font-size:9px;color:#2e2e2e;letter-spacing:.08em">${CAT_LABEL[p.category]||''}</span>
+          ${fmtDate(p.date)?`<span style="font-size:9px;color:#2c2c2c;margin-left:auto">${fmtDate(p.date)}</span>`:''}
+          ${pdfTag}
+        </div>
+      </div>`;
+    }).join('');
+
+    body.querySelectorAll('.res-row').forEach(row=>{
+      row.addEventListener('click',()=>{
+        if(_activeRow) _activeRow.classList.remove('res-active');
+        row.classList.add('res-active');
+        _activeRow=row;
+        openPdf(_filtered[parseInt(row.dataset.idx)]);
+      });
+    });
+  }
+
+  async function load(refresh=false){
+    const body=g('res-body');
+    const ts=g('res-ts');
+    if(body) body.innerHTML=`<div style="padding:24px 12px;color:var(--muted);font-size:10px;letter-spacing:.1em;text-align:center">${ld(refresh?'Refreshing feeds\u2026':'Loading research\u2026')}</div>`;
+    if(ts) ts.textContent='';
+    try{
+      const url=refresh?`${API}/res/refresh`:`${API}/res`;
+      const r=await fetch(url).then(x=>x.json());
+      if(!r.ok) throw new Error(r.error||'Failed');
+      _allPapers=r.papers||[];
+      _cachedAt=r.cached_at||0;
+      buildInstDropdown(_allPapers);
+      render();
+      if(ts) ts.textContent=fmtAgo(_cachedAt);
+      if(_tsTimer) clearInterval(_tsTimer);
+      _tsTimer=setInterval(()=>{ if(ts&&document.getElementById(PANEL_ID)) ts.textContent=fmtAgo(_cachedAt); else clearInterval(_tsTimer); },30000);
+    }catch(e){
+      if(body) body.innerHTML=`<div style="padding:16px 12px"><div class="err">${e.message}</div></div>`;
+    }
+  }
+
+  ['res-q','res-cat','res-inst'].forEach(id=>{
+    const e=g(id);
+    if(e){ e.addEventListener('input',render); e.addEventListener('change',render); }
+  });
+  g('res-ref').addEventListener('click',()=>load(true));
+
+  load(false);
 }
 
 // ── HELP ──

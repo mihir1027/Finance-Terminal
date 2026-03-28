@@ -1,7 +1,7 @@
 """
 providers.py — Hierarchical data provider with automatic fallback.
 
-Quote chain:  Massive → Twelve Data → Finnhub → yfinance
+Quote chain:  Massive → Twelve Data → Tiingo → Finnhub → Alpha Vantage → yfinance
 Each provider returns a dict on success, or None on failure.
 """
 
@@ -11,7 +11,7 @@ import requests
 import yfinance as yf
 import finnhub
 import config
-from config import FINNHUB_API_KEY, TWELVE_DATA_API_KEY
+from config import FINNHUB_API_KEY, TWELVE_DATA_API_KEY, TIINGO_API_KEY, ALPHA_VANTAGE_API_KEY
 
 # Set PROVIDER_VERBOSE=false in .env to silence provider log lines
 _VERBOSE = os.getenv("PROVIDER_VERBOSE", "true").lower() == "true"
@@ -153,11 +153,56 @@ def _quote_twelve_data(ticker):
 
 
 # ─────────────────────────────────────────────
-#  PROVIDER 3 — Finnhub
+#  PROVIDER 3 — Tiingo
+# ─────────────────────────────────────────────
+
+def _quote_tiingo(ticker):
+    """Try Tiingo — 100 free calls/day, validated EOD data."""
+    try:
+        if not TIINGO_API_KEY:
+            return None
+        headers = {"Content-Type": "application/json", "Authorization": f"Token {TIINGO_API_KEY}"}
+        r = requests.get(
+            f"https://api.tiingo.com/tiingo/daily/{ticker}/prices",
+            headers=headers, timeout=5
+        )
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if not data or not isinstance(data, list):
+            return None
+        d = data[0]
+        price = d.get("close") or d.get("adjClose")
+        prev  = d.get("prevClose")
+        if not price:
+            return None
+        chg = round(price - prev, 4) if prev else None
+        pct = round(chg / prev * 100, 4) if (chg and prev) else None
+        return {
+            "source":    "tiingo",
+            "ticker":    ticker.upper(),
+            "name":      "—",
+            "price":     price,
+            "prev":      prev,
+            "change":    chg,
+            "changePct": pct,
+            "open":      d.get("open"),
+            "high":      d.get("high"),
+            "low":       d.get("low"),
+            "volume":    d.get("volume"),
+            "exchange":  "—",
+            "currency":  "USD",
+        }
+    except Exception:
+        return None
+
+
+# ─────────────────────────────────────────────
+#  PROVIDER 4 — Finnhub
 # ─────────────────────────────────────────────
 
 def _quote_finnhub(ticker):
-    """Try Finnhub third — 60 calls/min."""
+    """Try Finnhub fourth — 60 calls/min."""
     try:
         quote = finnhub_client.quote(ticker)
         if not quote or quote.get("c", 0) == 0:
@@ -188,7 +233,49 @@ def _quote_finnhub(ticker):
 
 
 # ─────────────────────────────────────────────
-#  PROVIDER 4 — yfinance (last resort)
+#  PROVIDER 5 — Alpha Vantage
+# ─────────────────────────────────────────────
+
+def _quote_alpha_vantage(ticker):
+    """Try Alpha Vantage — 5 req/min free, no daily cap."""
+    try:
+        if not ALPHA_VANTAGE_API_KEY:
+            return None
+        r = requests.get(
+            "https://www.alphavantage.co/query",
+            params={"function": "GLOBAL_QUOTE", "symbol": ticker, "apikey": ALPHA_VANTAGE_API_KEY},
+            timeout=6
+        )
+        if r.status_code != 200:
+            return None
+        gq = r.json().get("Global Quote", {})
+        if not gq or not gq.get("05. price"):
+            return None
+        price = float(gq["05. price"])
+        prev  = float(gq.get("08. previous close") or 0) or None
+        chg   = float(gq.get("09. change") or 0) or None
+        pct   = float(gq.get("10. change percent", "0%").replace("%", "")) or None
+        return {
+            "source":    "alpha_vantage",
+            "ticker":    ticker.upper(),
+            "name":      "—",
+            "price":     price,
+            "prev":      prev,
+            "change":    chg,
+            "changePct": pct,
+            "open":      float(gq.get("02. open") or 0) or None,
+            "high":      float(gq.get("03. high") or 0) or None,
+            "low":       float(gq.get("04. low") or 0) or None,
+            "volume":    int(gq.get("06. volume") or 0) or None,
+            "exchange":  "—",
+            "currency":  "USD",
+        }
+    except Exception:
+        return None
+
+
+# ─────────────────────────────────────────────
+#  PROVIDER 6 — yfinance (last resort)
 # ─────────────────────────────────────────────
 
 def _quote_yfinance(ticker):
@@ -235,12 +322,14 @@ def get_quote(ticker):
     Return a quote dict for the given ticker by trying providers in order:
       1. Massive
       2. Twelve Data
-      3. Finnhub
-      4. yfinance
+      3. Tiingo
+      4. Finnhub
+      5. Alpha Vantage
+      6. yfinance
 
     Returns None if all providers fail.
     """
-    chain = [_quote_massive, _quote_twelve_data, _quote_finnhub, _quote_yfinance]
+    chain = [_quote_massive, _quote_twelve_data, _quote_tiingo, _quote_finnhub, _quote_alpha_vantage, _quote_yfinance]
     if _is_crypto(ticker):
         chain = [_quote_binance] + chain
     for provider in chain:

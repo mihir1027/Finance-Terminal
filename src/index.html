@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KINETIC TERMINAL</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&family=Oxygen+Mono&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<!-- TradingView Lightweight Charts — professional financial charting -->
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<!-- TradingView Advanced Charts — preload so widgets instantiate instantly -->
+<script src="https://s3.tradingview.com/tv.js" async></script>
+<link rel="stylesheet" href="./styles/index.css">
+
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <div id="tb-left">
+    <span id="tb-prompt">></span>
+    <div class="tb-hint" id="tb-hint"></div>
+    <input id="cli-inp" type="text" placeholder="" autocomplete="off" spellcheck="false">
+    <span id="tb-mirror" style="position:absolute;visibility:hidden;white-space:pre;font-size:19px;font-family:'Oxygen Mono',monospace;letter-spacing:.05em;text-transform:uppercase;pointer-events:none;user-select:none;"></span>
+    <span id="tb-cursor"></span>
+  </div>
+  <div class="tb-right">
+    <span class="tb-cmd" onclick="runCmd('SOVG')">SOVG</span>
+    <span class="tb-cmd" onclick="runCmd('HELP')">HELP</span>
+    <div id="clock"></div>
+    <div class="ldot"></div>
+  </div>
+</div>
+
+<!-- COMMAND PALETTE (dropdown below topbar left) -->
+<div id="cmd-palette">
+  <div id="cp-body"></div>
+  <div class="cp-hint">[↑↓] NAVIGATE &nbsp;·&nbsp; [ENTER] RUN &nbsp;·&nbsp; [ESC] CLOSE</div>
+</div>
+
+<!-- DESKTOP -->
+<div id="desktop"></div>
+
+<!-- BLOOMBERG FKEY BAR -->
+<!-- CLI output log (bottom, no input) -->
+<div id="cli-wrap">
+  <div id="cli-hist-box"><div id="cli-hist"></div></div>
+</div>
+
+<!-- BATCH IMPORT -->
+<div id="batch-ov">
+  <div class="batch-box">
+    <h3>BATCH IMPORT</h3>
+    <textarea id="batch-ta" placeholder="One ticker per line:&#10;AAPL&#10;MSFT&#10;NVDA&#10;GC=F"></textarea>
+    <div class="batch-btns">
+      <button class="bb" onclick="closeBatch()">CANCEL</button>
+      <button class="bb p" onclick="doBatch()">IMPORT</button>
+    </div>
+  </div>
+</div>
+
+
+<script type="module" src="./main.ts"></script>
+</body>
+</html>

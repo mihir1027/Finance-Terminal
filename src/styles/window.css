@@ -1,0 +1,37 @@
+/* ── DESKTOP ── */
+#desktop{position:relative;height:calc(100vh - 51px - 24px);overflow:hidden;}
+
+/* ── FLOATING WINDOW ── */
+.win{position:absolute;background:var(--bg2);border:1px solid rgba(251,191,36,.08);display:flex;flex-direction:column;min-width:180px;min-height:80px;box-shadow:0 10px 50px rgba(0,0,0,.85);}
+.win-bar{height:28px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;background:var(--bg2);border-bottom:1px solid var(--bdr);cursor:grab;flex-shrink:0;}
+.win-bar:active{cursor:grabbing;}
+.win-title{font-size:11px;font-weight:600;color:var(--orange);letter-spacing:.08em;}
+.win-acts{display:flex;gap:4px;}
+.wb{width:17px;height:17px;display:grid;place-items:center;color:var(--dim);cursor:pointer;font-size:10px;border:1px solid transparent;}
+.wb:hover{color:var(--text);border-color:var(--bdr2);}
+.wb.x:hover{color:var(--red);border-color:var(--red);}
+.wbody{flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0;}
+
+/* ── ACTIVE WINDOW ACCENT ── */
+.active-win{outline:1px solid rgba(251,191,36,.45);outline-offset:-1px;}
+
+/* ── HEADLESS FOCUS CARDS ── */
+.win[data-wtype="foc"] .win-bar{display:none;}
+.win[data-wtype="foc"] .wbody{height:100%;}
+.win[data-wtype="foc"]{cursor:grab;}
+.win[data-wtype="foc"]:active{cursor:grabbing;}
+
+/* ── FOCUS RESPONSIVE CONTENT ── */
+.win[data-wtype="foc"]{container-type:size;container-name:foc-win;}
+
+/* ── RESIZE HANDLES ── */
+.rz{position:absolute;z-index:10;}
+.rz-n{top:-4px;left:8px;right:8px;height:8px;cursor:n-resize;}
+.rz-s{bottom:-4px;left:8px;right:8px;height:8px;cursor:s-resize;}
+.rz-e{top:8px;bottom:8px;right:-4px;width:8px;cursor:e-resize;}
+.rz-w{top:8px;bottom:8px;left:-4px;width:8px;cursor:w-resize;}
+.rz-ne{top:-4px;right:-4px;width:12px;height:12px;cursor:ne-resize;}
+.rz-nw{top:-4px;left:-4px;width:12px;height:12px;cursor:nw-resize;}
+.rz-se{bottom:-4px;right:-4px;width:12px;height:12px;cursor:se-resize;}
+.rz-se::before{content:'';position:absolute;bottom:3px;right:3px;width:5px;height:5px;border-right:1.5px solid var(--dim);border-bottom:1.5px solid var(--dim);}
+.rz-sw{bottom:-4px;left:-4px;width:12px;height:12px;cursor:sw-resize;}

@@ -1,0 +1,21 @@
+:root {
+  --bg:    #0a0a0a;
+  --bg1:   #111111;
+  --bg2:   #161616;
+  --bg3:   #1e1e1e;
+  --bdr:   #2c2c2c;
+  --bdr2:  #3a3a3a;
+  --green: #4ade80;
+  --red:   #f87171;
+  --amber: #fbbf24;
+  --cyan:  #38bdf8;
+  --orange:#F08C00;
+  --purple:#a78bfa;
+  --text:  #dde1e7;
+  --dim:   #8791a1;
+  --muted: #4b5563;
+  --font:  'Oxygen Mono', monospace;
+  --font-prev: 'JetBrains Mono', monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;overflow:hidden;}

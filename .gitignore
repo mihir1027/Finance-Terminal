@@ -8,12 +8,22 @@ __pycache__/
 *.pyo
 *.pyx
 venv/
+venv-mac/
 .venv/
 env/
 ENV/
 *.egg-info/
 dist/
 build/
+
+# Node
+node_modules/
+
+# Cache / generated data
+.edgar_cache/
+
+# Claude Code project notes
+.claude/
 
 # IDE
 .idea/

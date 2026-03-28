@@ -100,7 +100,11 @@ def fmt_num(n, decimals=2):
 
 @app.route("/")
 def index():
-    return send_from_directory(".", "index.html")
+    return send_from_directory("dist", "index.html")
+
+@app.route("/assets/<path:filename>")
+def assets(filename):
+    return send_from_directory("dist/assets", filename)
 
 # ── QUOTE (Q) ─────────────────────────────────
 @app.route("/api/quote/<ticker>")
@@ -289,6 +293,100 @@ def chart(ticker):
         return jsonify({"ok": False, "error": str(e)})
 
 
+# ── TECH — Alpha Vantage technical indicator signal badge ────
+# Returns latest RSI, MACD, and SMA200 values for the chart signal badge.
+# 3 sequential AV calls at 5 req/min; cached 2h so subsequent loads are instant.
+_TECH_CACHE: dict = {}   # ticker -> {"data": {...}, "ts": float}
+_TECH_TTL   = 7200       # 2h
+
+@app.route("/api/tech/<ticker>")
+def tech_indicators(ticker):
+    import time as _t
+    ticker = ticker.upper()
+    now = _t.time()
+    cached = _TECH_CACHE.get(ticker, {})
+    if cached.get("data") and now - cached.get("ts", 0) < _TECH_TTL:
+        return jsonify({"ok": True, **cached["data"]})
+
+    key = config.ALPHA_VANTAGE_API_KEY
+    if not key:
+        return jsonify({"ok": False, "error": "Alpha Vantage key not configured"})
+
+    def av_get(function, extra_params):
+        try:
+            params = {"function": function, "symbol": ticker, "apikey": key, **extra_params}
+            r = requests.get("https://www.alphavantage.co/query", params=params, timeout=10)
+            if r.status_code != 200:
+                return None
+            return r.json()
+        except Exception:
+            return None
+
+    result = {}
+
+    # RSI (14-period daily)
+    rsi_data = av_get("RSI", {"interval": "daily", "time_period": 14, "series_type": "close"})
+    if rsi_data:
+        series = rsi_data.get("Technical Analysis: RSI", {})
+        if series:
+            latest_date = sorted(series.keys(), reverse=True)[0]
+            result["rsi"] = {"date": latest_date, "value": round(float(series[latest_date]["RSI"]), 2)}
+
+    _t.sleep(13)  # respect 5 req/min limit
+
+    # MACD (daily)
+    macd_data = av_get("MACD", {"interval": "daily", "series_type": "close"})
+    if macd_data:
+        series = macd_data.get("Technical Analysis: MACD", {})
+        if series:
+            latest_date = sorted(series.keys(), reverse=True)[0]
+            d = series[latest_date]
+            result["macd"] = {
+                "date": latest_date,
+                "macd":   round(float(d["MACD"]), 4),
+                "signal": round(float(d["MACD_Signal"]), 4),
+                "hist":   round(float(d["MACD_Hist"]), 4),
+            }
+
+    _t.sleep(13)
+
+    # SMA 200 (daily)
+    sma_data = av_get("SMA", {"interval": "daily", "time_period": 200, "series_type": "close"})
+    if sma_data:
+        series = sma_data.get("Technical Analysis: SMA", {})
+        if series:
+            latest_date = sorted(series.keys(), reverse=True)[0]
+            result["sma200"] = {"date": latest_date, "value": round(float(series[latest_date]["SMA"]), 2)}
+
+    if not result:
+        return jsonify({"ok": False, "error": "No indicator data returned from Alpha Vantage"})
+
+    # Compute signal summary
+    signals = []
+    rsi_val = result.get("rsi", {}).get("value")
+    macd_v  = result.get("macd", {})
+    if rsi_val is not None:
+        if rsi_val < 30:   signals.append("bullish")   # oversold
+        elif rsi_val > 70: signals.append("bearish")   # overbought
+        else:              signals.append("neutral")
+    if macd_v:
+        if macd_v.get("macd", 0) > macd_v.get("signal", 0):
+            signals.append("bullish")
+        else:
+            signals.append("bearish")
+    bullish = signals.count("bullish")
+    bearish = signals.count("bearish")
+    if bullish > bearish:   signal = "BULLISH"
+    elif bearish > bullish: signal = "BEARISH"
+    else:                   signal = "NEUTRAL"
+    result["signal"]     = signal
+    result["signalScore"] = f"{bullish}/{len(signals)}"
+    result["ticker"]      = ticker
+
+    _TECH_CACHE[ticker] = {"data": result, "ts": now}
+    return jsonify({"ok": True, **result})
+
+
 # ── N (News) — Google News RSS (real-time) ────
 @app.route("/api/news/<ticker>")
 def news(ticker):
@@ -452,27 +550,275 @@ def top_news():
 
 
 # ── HDS (Holders) ─────────────────────────────
+_HDS_CACHE: dict = {}   # ticker -> {"data": dict, "ts": float}
+_HDS_TTL   = 86400      # 24h — 13F data is quarterly
+
 @app.route("/api/hds/<ticker>")
 def holders(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        ih = t.institutional_holders
-        mh = t.mutualfund_holders
+    import time
+    now = time.time()
+    tk  = ticker.upper()
 
-        def df_fmt(df):
+    cached = _HDS_CACHE.get(tk)
+    if cached and now - cached["ts"] < _HDS_TTL:
+        return jsonify({"ok": True, **cached["data"]})
+
+    try:
+        t   = yf.Ticker(tk)
+        inf = t.info or {}
+
+        shares_out = inf.get("sharesOutstanding")
+        float_shrs = inf.get("floatShares")
+        short_pct  = inf.get("shortPercentOfFloat")
+        long_name  = inf.get("longName", tk)
+        cusip      = inf.get("cusip", "")
+
+        def col(df, *names):
+            if df is None: return None
+            return next((c for c in df.columns
+                         for n in names if n.lower() in c.lower()), None)
+
+        def df_fmt(df, htype="Institution"):
             if df is None or df.empty: return []
             rows = []
+            nc = col(df,'holder','name'); sc = col(df,'shares')
+            vc = col(df,'value');        pc = col(df,'pctout','% out','pctheld')
+            cc = col(df,'change','chng'); dc = col(df,'date','reported')
             for _, r in df.iterrows():
-                rows.append({k: (None if str(v) in ("nan","NaT","None") else (str(v)[:10] if hasattr(v,"year") else v)) for k,v in r.items()})
-            return rows[:25]
+                def g(c):
+                    if c is None: return None
+                    v = r[c]
+                    return None if str(v) in ("nan","NaT","None","") else v
+                s_val = int(g(sc))    if g(sc) is not None else None
+                c_val = float(g(cc))  if g(cc) is not None else None
+                # changePct = change / previous_shares * 100
+                # previous_shares = current_shares - change
+                chg_pct = None
+                if c_val is not None and s_val is not None:
+                    prev = s_val - c_val
+                    if prev != 0:
+                        chg_pct = (c_val / prev) * 100
+                rows.append({
+                    "name":          str(g(nc) or "—"),
+                    "shares":        s_val,
+                    "value":         float(g(vc))  if g(vc) is not None else None,
+                    "pctOut":        float(g(pc))  if g(pc) is not None else None,
+                    "change":        c_val,
+                    "changePct":     chg_pct,
+                    "dateReported":  str(g(dc))[:10] if g(dc) else None,
+                    "holderType":    htype,
+                    "source":        "yfinance",
+                    "portName":      "",
+                    "hasOptions":    False,
+                    "estHoldPeriod": None,
+                    "pctPortfolio":  None,
+                })
+            return rows
 
-        return jsonify({
-            "ok": True, "ticker": ticker.upper(),
-            "institutional": df_fmt(ih),
-            "mutualFund": df_fmt(mh),
-        })
+        inst = df_fmt(t.institutional_holders, "Institution")
+        mf   = df_fmt(t.mutualfund_holders,    "Mutual Fund")
+
+        # EDGAR enrichment (non-blocking, best-effort)
+        try:
+            from edgar import get_institutional_holders_edgar
+            edgar_holders = get_institutional_holders_edgar(tk)
+            if edgar_holders:
+                # Math engine: back-fill pctOut = shares / sharesOutstanding
+                # (stored as a decimal ratio, same convention as yfinance)
+                if shares_out:
+                    for eh in edgar_holders:
+                        if eh["pctOut"] is None and eh["shares"] is not None:
+                            eh["pctOut"] = eh["shares"] / shares_out
+
+                yf_names = {r["name"].lower() for r in inst}
+                for eh in edgar_holders:
+                    if eh["name"].lower() not in yf_names:
+                        inst.append(eh)
+                inst.sort(key=lambda x: x.get("value") or 0, reverse=True)
+        except Exception:
+            pass
+
+        pct_inst = sum((r["pctOut"] or 0) for r in inst) * 100
+
+        result = {
+            "ticker":        tk,
+            "longName":      long_name,
+            "cusip":         cusip,
+            "sharesOut":     shares_out,
+            "floatShares":   float_shrs,
+            "shortPct":      short_pct,
+            "pctInst":       round(pct_inst, 2) if pct_inst else None,
+            "institutional": inst,
+            "mutualFund":    mf,
+        }
+        _HDS_CACHE[tk] = {"data": result, "ts": now}
+        return jsonify({"ok": True, **result})
+
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
+
+
+# ── HLDR — ETF Holdings (Bloomberg HLDR-style) ───────────────────────────────
+_HLDR_CACHE: dict = {}
+_HLDR_TTL   = 3600   # 1h — ARK publishes daily, yfinance top-holdings are stable
+
+_ARK_FUNDS = {'ARKK','ARKG','ARKF','ARKQ','ARKX','ARKW','PRNT','IZRL'}
+
+@app.route("/api/hldr/<ticker>")
+def hldr(ticker):
+    import time as _t
+    now = _t.time()
+    tk  = ticker.upper()
+
+    cached = _HLDR_CACHE.get(tk)
+    if cached and now - cached["ts"] < _HLDR_TTL:
+        return jsonify({"ok": True, **cached["data"]})
+
+    try:
+        info = yf.Ticker(tk).info or {}
+        name         = info.get("longName") or info.get("shortName", tk)
+        fund_family  = info.get("fundFamily", "—")
+        total_assets = info.get("totalAssets") or info.get("netAssets")
+        expense_ratio= info.get("netExpenseRatio") or info.get("annualReportExpenseRatio")
+        quote_type   = info.get("quoteType", "")
+        legal_type   = info.get("legalType", "")
+        is_ark       = tk in _ARK_FUNDS
+
+        holdings     = []
+        trades       = []
+        filing_date  = None
+
+        if is_ark:
+            try:
+                h_resp = requests.get(
+                    f"https://arkfunds.io/api/v2/etf/holdings?symbol={tk}",
+                    timeout=10, headers={"User-Agent": "FinanceTerminal/1.0"}
+                ).json()
+                filing_date = h_resp.get("date_from", "")
+                for h in h_resp.get("holdings", []):
+                    holdings.append({
+                        "name":        h.get("company", "—"),
+                        "ticker":      h.get("ticker", "—"),
+                        "shares":      h.get("shares"),
+                        "sharesChg":   None,
+                        "weight":      h.get("weight"),
+                        "marketValue": h.get("market_value"),
+                        "sharePrice":  h.get("share_price"),
+                        "rank":        h.get("weight_rank", 0),
+                    })
+                t_resp = requests.get(
+                    f"https://arkfunds.io/api/v2/etf/trades?symbol={tk}",
+                    timeout=10, headers={"User-Agent": "FinanceTerminal/1.0"}
+                ).json()
+                trade_map = {}
+                for tr in t_resp.get("trades", []):
+                    sign = 1 if tr.get("direction") == "Buy" else -1
+                    trade_map[tr.get("ticker", "")] = sign * (tr.get("shares") or 0)
+                    trades.append({
+                        "ticker":    tr.get("ticker", ""),
+                        "company":   tr.get("company", ""),
+                        "direction": tr.get("direction", ""),
+                        "shares":    tr.get("shares", 0),
+                        "etfPct":    tr.get("etf_percent", 0),
+                        "date":      tr.get("date", ""),
+                    })
+                for h in holdings:
+                    h["sharesChg"] = trade_map.get(h["ticker"])
+            except Exception:
+                pass  # fall through to yfinance
+
+        holdings_source = "ARK" if (is_ark and holdings) else None
+
+        prev_date = None
+
+        if not holdings:
+            # ── Tier 1: EDGAR N-PORT (free, complete, all ETFs, with pos changes) ─
+            try:
+                from edgar import get_etf_holdings_nport
+                nport = get_etf_holdings_nport(tk)
+                if nport.get("holdings"):
+                    holdings        = nport["holdings"]
+                    trades          = nport.get("trades", [])
+                    filing_date     = nport.get("filingDate") or filing_date
+                    prev_date       = nport.get("prevDate")
+                    holdings_source = "EDGAR N-PORT"
+                    if nport.get("netAssets"):
+                        total_assets = nport["netAssets"]
+            except Exception:
+                pass
+
+        if not holdings:
+            # ── Tier 2: Finnhub ETF holdings (existing key, ~50-100 holdings) ─
+            try:
+                if FINNHUB_API_KEY:
+                    fh_resp = requests.get(
+                        "https://finnhub.io/api/v1/etf/holdings",
+                        params={"symbol": tk, "token": FINNHUB_API_KEY},
+                        timeout=10,
+                    ).json()
+                    for i, h in enumerate(fh_resp.get("holdings", [])):
+                        w  = (h.get("percent") or 0) * 100
+                        mv = h.get("value") or (total_assets * w / 100 if total_assets and w else None)
+                        holdings.append({
+                            "name":        h.get("name", "—"),
+                            "ticker":      h.get("symbol", "—"),
+                            "shares":      h.get("share"),
+                            "sharesChg":   None,
+                            "weight":      round(w, 4),
+                            "marketValue": mv,
+                            "sharePrice":  None,
+                            "rank":        i + 1,
+                        })
+                    if holdings:
+                        holdings_source = "Finnhub"
+            except Exception:
+                pass
+
+        if not holdings:
+            # ── Tier 3: yfinance top_holdings (top 10 only, last resort) ──────
+            try:
+                fd  = yf.Ticker(tk).funds_data
+                top = fd.top_holdings
+                for i, (sym, row) in enumerate(top.iterrows()):
+                    w  = float(row.get("Holding Percent", 0)) * 100
+                    mv = (total_assets * w / 100) if total_assets else None
+                    holdings.append({
+                        "name":        str(row.get("Name", "—")),
+                        "ticker":      sym,
+                        "shares":      None,
+                        "sharesChg":   None,
+                        "weight":      round(w, 2),
+                        "marketValue": mv,
+                        "sharePrice":  None,
+                        "rank":        i + 1,
+                    })
+                if holdings:
+                    holdings_source = "yfinance (top 10)"
+            except Exception:
+                pass
+
+        data = {
+            "ticker":          tk,
+            "name":            name,
+            "fundFamily":      fund_family,
+            "totalAssets":     total_assets,
+            "totalAssetsFmt":  fmt_large(total_assets) if total_assets else "—",
+            "expenseRatio":    expense_ratio,
+            "quoteType":       quote_type,
+            "legalType":       legal_type,
+            "isArk":           is_ark,
+            "holdings":        holdings,
+            "numHoldings":     len(holdings),
+            "trades":          trades,
+            "filingDate":      filing_date,
+            "prevDate":        prev_date,
+            "holdingsSource":  holdings_source,
+        }
+        _HLDR_CACHE[tk] = {"data": data, "ts": now}
+        return jsonify({"ok": True, **data})
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()})
 
 
 # ── CF (SEC Filings) ──────────────────────────
@@ -622,6 +968,7 @@ _TD_COMMODITY = {
     "BZ=F": "UKOIL",   "NG=F": "NGAS",    "HG=F": "HG",
     "PL=F": "XPT/USD", "ZW=F": "WHEAT",   "ZC=F": "CORN",
     "ZS=F": "SOYBEAN", "KC=F": "COFFEE",  "SB=F": "SUGAR",
+    "PA=F": "XPD/USD", "HO=F": "HEATING OIL", "RB=F": "GASOLINE",
 }
 
 _YTD_CACHE = {}  # sym → {"price": x, "date": "YYYY-MM-DD"}
@@ -684,21 +1031,132 @@ def _commodity_twelve_data(yf_sym, name):
     except Exception:
         return None
 
+_AGRI_CACHE = {"data": None, "ts": 0}
+_AGRI_TTL   = 86400  # 24h — FRED updates monthly
+
+# Global commodity price series from IMF/World Bank via FRED (USD per metric ton unless noted)
+_AGRI_FRED_SERIES = [
+    ("PMAIZMTUSDM",   "Corn",          "USD/MT",   "World Bank"),
+    ("PWHEAMTUSDM",   "Wheat",         "USD/MT",   "World Bank"),
+    ("PSOYBUSDQ",     "Soybeans",      "USD/MT",   "World Bank"),
+    ("PCOTTINDUSDM",  "Cotton",        "USD/MT",   "World Bank"),
+    ("PSUGAISAUSDM",  "Sugar",         "USD/MT",   "World Bank"),
+    ("PRICENPQUSDM",  "Rice",          "USD/MT",   "World Bank"),
+    ("POILAPSPUSDM",  "Crude Oil",     "USD/bbl",  "World Bank"),
+    ("PNGASUSDM",     "Natural Gas",   "USD/MMBTU","World Bank"),
+]
+
+@app.route("/api/agri")
+def agri_prices():
+    """Global agricultural commodity prices from FRED/World Bank, with YoY comparison."""
+    import time as _t
+    now = _t.time()
+    if _AGRI_CACHE["data"] and now - _AGRI_CACHE["ts"] < _AGRI_TTL:
+        return jsonify({"ok": True, **_AGRI_CACHE["data"]})
+
+    fred_key = config.FRED_API_KEY
+    if not fred_key:
+        return jsonify({"ok": False, "error": "FRED API key not configured"})
+
+    def fred_series(sid, limit=14):
+        try:
+            r = requests.get(
+                "https://api.stlouisfed.org/fred/series/observations",
+                params={"series_id": sid, "api_key": fred_key, "file_type": "json",
+                        "limit": limit, "sort_order": "desc"},
+                timeout=8
+            )
+            obs = r.json().get("observations", [])
+            # Filter out missing values
+            return [o for o in obs if o.get("value") not in (".", None, "")]
+        except Exception:
+            return []
+
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        futs = {ex.submit(fred_series, sid): (sid, name, unit, src)
+                for sid, name, unit, src in _AGRI_FRED_SERIES}
+        for fut, (sid, name, unit, src) in futs.items():
+            try:
+                obs = fut.result(timeout=12)
+                if not obs:
+                    continue
+                latest = obs[0]
+                price  = float(latest["value"])
+                date   = latest["date"]
+                # YoY: obs[12] for monthly series, obs[3] for quarterly (approx 1yr back)
+                yoy_pct = None
+                if len(obs) >= 13:
+                    prev_yr = float(obs[12]["value"])
+                    yoy_pct = round((price - prev_yr) / abs(prev_yr) * 100, 2) if prev_yr else None
+                elif len(obs) >= 4:
+                    prev_yr = float(obs[3]["value"])
+                    yoy_pct = round((price - prev_yr) / abs(prev_yr) * 100, 2) if prev_yr else None
+                # MoM
+                mom_pct = None
+                if len(obs) >= 2:
+                    prev_mo = float(obs[1]["value"])
+                    mom_pct = round((price - prev_mo) / abs(prev_mo) * 100, 2) if prev_mo else None
+                results.append({
+                    "name":   name,
+                    "price":  round(price, 2),
+                    "unit":   unit,
+                    "date":   date,
+                    "yoy":    yoy_pct,
+                    "mom":    mom_pct,
+                    "source": src,
+                })
+            except Exception:
+                continue
+
+    if not results:
+        return jsonify({"ok": False, "error": "No agricultural data returned from FRED"})
+
+    result = {"commodities": results}
+    _AGRI_CACHE["data"] = result
+    _AGRI_CACHE["ts"]   = now
+    return jsonify({"ok": True, **result})
+
+
+_COMMOD_ROOT_FOR_YF = {
+    "GC=F": "GC", "SI=F": "SI", "PL=F": "PL", "HG=F": "HG", "PA=F": "PA",
+    "CL=F": "CL", "BZ=F": "BZ", "NG=F": "NG", "HO=F": "HO", "RB=F": "RB",
+    "ZW=F": "ZW", "ZC=F": "ZC", "ZS=F": "ZS", "KC=F": "KC", "SB=F": "SB",
+    "CC=F": "CC", "CT=F": "CT", "OJ=F": "OJ", "LE=F": "LE", "HE=F": "HE",
+}
+
+def _current_front_month(root):
+    """Return heuristic front-month ticker code, e.g. 'GCJ26'."""
+    codes = ['F','G','H','J','K','M','N','Q','U','V','X','Z']
+    now = datetime.now()
+    mi  = (now.month - 1 + 1) % 12   # +1 month → nearest active contract
+    yr  = (now.year % 100) + ((now.month - 1 + 1) // 12)
+    return f"{root}{codes[mi]}{yr}"
+
+
 @app.route("/api/glco")
 def commodities():
     tickers = [
-        ("GC=F",  "Gold",         "METALS"),
-        ("SI=F",  "Silver",       "METALS"),
-        ("PL=F",  "Platinum",     "METALS"),
-        ("HG=F",  "Copper",       "METALS"),
-        ("CL=F",  "WTI Crude",    "ENERGY"),
-        ("BZ=F",  "Brent Crude",  "ENERGY"),
-        ("NG=F",  "Natural Gas",  "ENERGY"),
-        ("ZW=F",  "Wheat",        "AGRI"),
-        ("ZC=F",  "Corn",         "AGRI"),
-        ("ZS=F",  "Soybeans",     "AGRI"),
-        ("KC=F",  "Coffee",       "AGRI"),
-        ("SB=F",  "Sugar",        "AGRI"),
+        ("GC=F",  "Gold",          "METALS"),
+        ("SI=F",  "Silver",        "METALS"),
+        ("PL=F",  "Platinum",      "METALS"),
+        ("PA=F",  "Palladium",     "METALS"),
+        ("HG=F",  "Copper",        "METALS"),
+        ("CL=F",  "WTI Crude",     "ENERGY"),
+        ("BZ=F",  "Brent Crude",   "ENERGY"),
+        ("NG=F",  "Natural Gas",   "ENERGY"),
+        ("HO=F",  "Heating Oil",   "ENERGY"),
+        ("RB=F",  "RBOB Gasoline", "ENERGY"),
+        ("ZW=F",  "Wheat",         "AGRI"),
+        ("ZC=F",  "Corn",          "AGRI"),
+        ("ZS=F",  "Soybeans",      "AGRI"),
+        ("KC=F",  "Coffee",        "AGRI"),
+        ("SB=F",  "Sugar",         "AGRI"),
+        ("CC=F",  "Cocoa",         "AGRI"),
+        ("CT=F",  "Cotton",        "AGRI"),
+        ("OJ=F",  "Orange Juice",  "AGRI"),
+        ("LE=F",  "Live Cattle",   "LIVESTOCK"),
+        ("HE=F",  "Lean Hogs",     "LIVESTOCK"),
     ]
     results = []
     for sym, name, cat in tickers:
@@ -717,6 +1175,8 @@ def commodities():
                 continue
         if row:
             row["category"] = cat
+            root = _COMMOD_ROOT_FOR_YF.get(sym, sym.replace("=F",""))
+            row["activeTicker"] = _current_front_month(root)
             results.append(row)
 
     # Fetch YTD prices in parallel (cached after first call)
@@ -733,7 +1193,406 @@ def commodities():
     return jsonify({"ok": True, "commodities": results})
 
 
+# ── GLCO Inventories (Energy + USDA Ag Ending Stocks) ────────────────
+
+# USDA FAS PSD commodity codes → futures sym + US or World stocks
+_USDA_PSD_CROPS = {
+    "ZC=F": {"code": "0440000", "name": "Corn",     "country": "US"},
+    "ZW=F": {"code": "0410000", "name": "Wheat",    "country": "US"},
+    "ZS=F": {"code": "2222000", "name": "Soybeans", "country": "US"},
+    "CT=F": {"code": "2631000", "name": "Cotton",   "country": "US"},
+    "SB=F": {"code": "0612400", "name": "Sugar",    "country": "00"},  # World
+    "KC=F": {"code": "0711100", "name": "Coffee",   "country": "00"},  # World
+    "CC=F": {"code": "0812100", "name": "Cocoa",    "country": "00"},  # World
+}
+
+_USDA_UNIT_SHORT = {
+    "1000 MT":             ("÷1000", "MMT"),
+    "1000 (MT)":           ("÷1000", "MMT"),
+    "1000 480 lb. Bales":  ("÷1000", "Mbales"),
+    "1000 Bales":          ("÷1000", "Mbales"),
+}
+
+_GLCO_INV_CACHE: dict = {"data": None, "ts": 0}
+_GLCO_INV_TTL = 3600 * 6  # 6h — WASDE monthly; EIA weekly
+
+
+def _fetch_psd_ending_stocks(commodity_code: str, country_code: str):
+    """Return {value_mmt, yoy_pct, market_year, unit_label} from USDA FAS PSD API."""
+    try:
+        r = requests.get(
+            "https://apps.fas.usda.gov/psdonline/api/psd/data",
+            params={"commodityCode": commodity_code, "countryCode": country_code},
+            timeout=12,
+            headers={"Accept": "application/json"},
+        )
+        if r.status_code != 200:
+            return None
+        rows = r.json()
+        # Keep only Ending Stocks rows (attributeName match, case-insensitive)
+        es = [d for d in rows if "ending stocks" in (d.get("attributeName") or "").lower()]
+        if not es:
+            return None
+        # Group by marketYear — take latest month estimate per year
+        by_year: dict = {}
+        for s in es:
+            yr  = s.get("marketYear")
+            mo  = s.get("month", 0)
+            val = s.get("value")
+            if yr is None or val is None:
+                continue
+            if yr not in by_year or mo > by_year[yr]["month"]:
+                by_year[yr] = {"value": float(val), "month": mo,
+                               "unit": (s.get("unitId") or "1000 MT")}
+        if not by_year:
+            return None
+        years = sorted(by_year.keys(), reverse=True)
+        latest  = by_year[years[0]]
+        prior   = by_year[years[1]] if len(years) > 1 else None
+        raw_val = latest["value"]
+        raw_unit = latest["unit"]
+        # Convert to display units
+        scale, unit_label = _USDA_UNIT_SHORT.get(raw_unit, ("÷1000", "MMT"))
+        display_val = round(raw_val / 1000, 2)
+        yoy = None
+        if prior:
+            prev = prior["value"] / 1000
+            if prev:
+                yoy = round((display_val - prev) / abs(prev) * 100, 1)
+        mkt_yr_label = f"{str(years[0])[-2:]}/{str(years[0]+1)[-2:]}"
+        return {"value": display_val, "yoy": yoy,
+                "unit": unit_label, "marketYear": mkt_yr_label}
+    except Exception:
+        return None
+
+
+@app.route("/api/glco/inventories")
+def glco_inventories():
+    """Combined EIA energy inventory + USDA FAS PSD ag ending stocks for GLCO enrichment column."""
+    import time as _t
+    now = _t.time()
+    if _GLCO_INV_CACHE["data"] and now - _GLCO_INV_CACHE["ts"] < _GLCO_INV_TTL:
+        return jsonify({"ok": True, **_GLCO_INV_CACHE["data"]})
+
+    result: dict = {"energy": {}, "agStocks": {}}
+
+    # ── Pull energy from in-process cache (populated by /api/energy) ──
+    eng = _ENERGY_CACHE.get("data") or {}
+    if eng:
+        result["energy"] = {
+            "crude":      eng.get("crude") or {},
+            "gasStorage": eng.get("gasStorage") or {},
+        }
+
+    # ── Fetch ag ending stocks in parallel from USDA FAS PSD ──
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        futs = {ex.submit(_fetch_psd_ending_stocks, meta["code"], meta["country"]): sym
+                for sym, meta in _USDA_PSD_CROPS.items()}
+        for fut, sym in futs.items():
+            try:
+                val = fut.result(timeout=18)
+                if val:
+                    result["agStocks"][sym] = val
+            except Exception:
+                pass
+
+    _GLCO_INV_CACHE["data"] = result
+    _GLCO_INV_CACHE["ts"]   = now
+    return jsonify({"ok": True, **result})
+
+
+# ── Futures Chain ─────────────────────────────
+
+_CHAIN_CACHE = {}   # symbol → {"data": [...], "ts": float}
+_CHAIN_TTL   = 300  # 5 min
+
+_MONTH_CODES = ['F','G','H','J','K','M','N','Q','U','V','X','Z']
+_CHAIN_EXCHANGE = {
+    "GC": ".CMX", "SI": ".CMX", "HG": ".CMX", "PL": ".CMX",
+    "CL": ".NYM", "BZ": ".NYM", "NG": ".NYM",
+    "ZW": ".CBT", "ZC": ".CBT", "ZS": ".CBT",
+    "KC": ".NYB", "SB": ".NYB",  # ICE Futures US
+}
+
+
+def _chain_eodhd(symbol):
+    """Full futures chain from EODHD — one HTTP call, returns all active contracts."""
+    key = config.EODHD_API_KEY
+    if not key:
+        return None
+    try:
+        r = requests.get(
+            f"https://eodhd.com/api/futures/{symbol}.US",
+            params={"api_token": key, "fmt": "json"},
+            timeout=8
+        )
+        if r.status_code != 200:
+            return None
+        rows = r.json()
+        if not isinstance(rows, list) or not rows:
+            return None
+        chain = []
+        for row in rows:
+            last = row.get("close") or row.get("last")
+            prev = row.get("previousClose") or row.get("prev_close")
+            if not last:
+                continue
+            chg = round(last - prev, 4) if prev else None
+            pct = round(chg / prev * 100, 4) if (chg and prev) else None
+            chain.append({
+                "contract":  row.get("code", ""),
+                "expiry":    row.get("expiration_date") or row.get("expiry"),
+                "last":      last,
+                "change":    chg,
+                "changePct": pct,
+                "volume":    row.get("volume"),
+                "oi":        row.get("openInterest") or row.get("open_interest"),
+                "source":    "eodhd",
+            })
+        chain.sort(key=lambda x: x.get("expiry") or "")
+        return chain if chain else None
+    except Exception:
+        return None
+
+
+def _chain_yf(symbol, num_months=12):
+    """Fallback: parallel yfinance fetches for each contract month."""
+    suffix = _CHAIN_EXCHANGE.get(symbol.upper(), ".CMX")
+    now    = datetime.now()
+    mi     = now.month - 1
+    yr2    = now.year % 100
+
+    chain = []
+    try:
+        front = yf.Ticker(f"{symbol}=F").history(period="1d")
+        if not front.empty:
+            last = round(float(front["Close"].iloc[-1]), 2)
+            chain.append({"contract": f"{symbol}=F", "expiry": None,
+                          "last": last, "change": None, "changePct": None,
+                          "volume": None, "oi": None, "source": "yfinance"})
+    except Exception:
+        pass
+
+    def _fetch(i):
+        tmi  = (mi + i) % 12
+        tyr  = yr2 + (mi + i) // 12
+        code = _MONTH_CODES[tmi]
+        sym  = f"{symbol}{code}{tyr}{suffix}"
+        try:
+            h = yf.Ticker(sym).history(period="2d")
+            if h.empty:
+                return None
+            closes = h["Close"].dropna()
+            last = round(float(closes.iloc[-1]), 2)
+            prev = round(float(closes.iloc[-2]), 2) if len(closes) > 1 else None
+            chg  = round(last - prev, 4) if prev else None
+            pct  = round(chg / prev * 100, 4) if (chg and prev) else None
+            return {"contract": sym, "expiry": None,
+                    "last": last, "change": chg, "changePct": pct,
+                    "volume": None, "oi": None, "source": "yfinance"}
+        except Exception:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+        results = list(ex.map(_fetch, range(1, num_months + 1)))
+    chain += [r for r in results if r]
+    return chain if len(chain) > 1 else None
+
+
+@app.route("/api/futures/chain/<symbol>")
+def futures_chain(symbol):
+    """Full term structure for a CME/COMEX root symbol (GC, CL, NG, etc.).
+    Primary: EODHD single call. Fallback: yfinance parallel roller. Cache: 5 min.
+    """
+    import time as _t
+    sym = symbol.upper()
+    now = _t.time()
+    cached = _CHAIN_CACHE.get(sym)
+    if cached and now - cached["ts"] < _CHAIN_TTL:
+        return jsonify({"ok": True, "symbol": sym, "chain": cached["data"], "cached": True})
+
+    chain = _chain_eodhd(sym) or _chain_yf(sym)
+    if not chain:
+        return jsonify({"ok": False, "error": f"No futures chain data for {sym}"}), 404
+
+    _CHAIN_CACHE[sym] = {"data": chain, "ts": now}
+    return jsonify({"ok": True, "symbol": sym, "chain": chain, "cached": False})
+
+
+@app.route("/api/futures/quote/<symbol>")
+def futures_quote_fast(symbol):
+    """Lowest-latency quote for a futures root symbol (GC, CL, NG…).
+    Chain: Massive → Finnhub (GC1!) → yfinance continuous. No cache.
+    """
+    sym    = symbol.upper()
+    yf_sym = f"{sym}=F"
+
+    # 1. Massive — sub-second if key is active
+    result = _commodity_massive(yf_sym, sym)
+    if result:
+        return jsonify({"ok": True, **result})
+
+    # 2. Finnhub — real-time front-month root (GC1!), 60 calls/min
+    try:
+        q = finnhub_client.quote(f"{sym}1!")
+        if q and q.get("c", 0) > 0:
+            price = q["c"]; prev = q["pc"]
+            chg   = round(price - prev, 4) if prev else None
+            pct   = round(chg / prev * 100, 4) if (chg and prev) else None
+            return jsonify({
+                "ok": True, "source": "finnhub",
+                "sym": yf_sym, "name": sym,
+                "price": price, "prev": prev,
+                "change": chg, "changePct": pct,
+                "open": q.get("o"), "high": q.get("h"), "low": q.get("l"),
+            })
+    except Exception:
+        pass
+
+    # 3. yfinance continuous contract (last resort)
+    try:
+        inf   = yf.Ticker(yf_sym).info
+        price = inf.get("regularMarketPrice") or inf.get("previousClose")
+        prev  = inf.get("previousClose")
+        chg   = round(price - prev, 4) if (price and prev) else None
+        pct   = round(chg / prev * 100, 4) if (chg and prev) else None
+        if price:
+            return jsonify({
+                "ok": True, "source": "yfinance",
+                "sym": yf_sym, "name": inf.get("shortName", sym),
+                "price": price, "prev": prev,
+                "change": chg, "changePct": pct,
+                "open": inf.get("open"), "high": inf.get("dayHigh"),
+                "low": inf.get("dayLow"), "volume": inf.get("volume"),
+            })
+    except Exception:
+        pass
+
+    return jsonify({"ok": False, "error": f"No quote available for {sym}"}), 404
+
+
 # ── FX (Forex) ────────────────────────────────
+
+_TV_FX_CACHE = {"data": None, "ts": 0}
+_TV_FX_TTL   = 15  # 15s — TradingView scanner: near real-time forex
+
+_TV_FX_PAIRS = [
+    # TradingView symbol  yf sym        display name
+    ("FX:EURUSD",        "EURUSD=X",   "EUR/USD"),
+    ("FX:GBPUSD",        "GBPUSD=X",   "GBP/USD"),
+    ("FX:USDJPY",        "USDJPY=X",   "USD/JPY"),
+    ("FX:USDCHF",        "USDCHF=X",   "USD/CHF"),
+    ("FX:AUDUSD",        "AUDUSD=X",   "AUD/USD"),
+    ("FX:USDCAD",        "USDCAD=X",   "USD/CAD"),
+    ("FX:NZDUSD",        "NZDUSD=X",   "NZD/USD"),
+    ("FX:USDCNY",        "USDCNY=X",   "USD/CNY"),
+    ("FX:USDINR",        "USDINR=X",   "USD/INR"),
+    ("FX:USDBRL",        "USDBRL=X",   "USD/BRL"),
+    ("FX:USDMXN",        "USDMXN=X",   "USD/MXN"),
+    ("FX:USDKRW",        "USDKRW=X",   "USD/KRW"),
+    # Matrix-only pairs
+    ("FX:USDHKD",        "USDHKD=X",   "USD/HKD"),
+    ("FX:USDNOK",        "USDNOK=X",   "USD/NOK"),
+    ("FX:USDSEK",        "USDSEK=X",   "USD/SEK"),
+    ("FX:USDRUB",        "USDRUB=X",   "USD/RUB"),
+]
+
+# TV symbol lookup by yf symbol — used by fxmatrix
+_TV_SYM_BY_YF = {yf: tv for tv, yf, _ in _TV_FX_PAIRS}
+
+def _tv_fx_scan():
+    """Fetch all FX pairs in one POST to TradingView scanner. 15s cache.
+    Returns price, change, change%, YTD% — no yfinance needed."""
+    import time as _t
+    now = _t.time()
+    if _TV_FX_CACHE["data"] and now - _TV_FX_CACHE["ts"] < _TV_FX_TTL:
+        return _TV_FX_CACHE["data"]
+    tickers = [tv for tv, _, _ in _TV_FX_PAIRS]
+    fields  = ["close", "change", "change_percent", "high", "low", "open"]
+    payload = {
+        "symbols": {"query": {"types": []}, "tickers": tickers},
+        "columns": fields,
+        "options": {"lang": "en"},
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Origin": "https://www.tradingview.com",
+        "Referer": "https://www.tradingview.com/",
+    }
+    try:
+        r = requests.post("https://scanner.tradingview.com/forex/scan",
+                          json=payload, headers=headers, timeout=8)
+        if r.status_code != 200:
+            return None
+        rows = r.json().get("data", [])
+        result = {}
+        for row in rows:
+            sym  = row["s"]
+            vals = row.get("d", [])
+            result[sym] = {f: vals[i] for i, f in enumerate(fields) if i < len(vals)}
+        _TV_FX_CACHE["data"] = result
+        _TV_FX_CACHE["ts"]   = now
+        return result
+    except Exception:
+        return None
+
+_CL_FX_CACHE = {"data": None, "ts": 0}
+_CL_FX_TTL   = 3600  # 1h — CurrencyLayer: 100 req/day free
+
+def _fetch_currency_layer_rates():
+    """Fetch all FX rates from CurrencyLayer in one call and cache for 1h."""
+    import time as _t
+    now = _t.time()
+    if _CL_FX_CACHE["data"] and now - _CL_FX_CACHE["ts"] < _CL_FX_TTL:
+        return _CL_FX_CACHE["data"]
+    key = config.CURRENCY_LAYER_API_KEY
+    if not key:
+        return None
+    try:
+        r = requests.get(
+            "http://api.currencylayer.com/live",
+            params={"access_key": key, "currencies": "EUR,GBP,JPY,CHF,AUD,CAD,NZD,CNY,INR,BRL,MXN,KRW"},
+            timeout=6
+        )
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        if not d.get("success"):
+            return None
+        quotes = d.get("quotes", {})
+        _CL_FX_CACHE["data"] = quotes
+        _CL_FX_CACHE["ts"]   = now
+        return quotes
+    except Exception:
+        return None
+
+def _fx_currency_layer(yf_sym, name):
+    """CurrencyLayer rates — single bulk fetch, cached 1h."""
+    try:
+        quotes = _fetch_currency_layer_rates()
+        if not quotes:
+            return None
+        pair = yf_sym.replace("=X", "")  # EURUSD=X -> EURUSD
+        key  = "USD" + pair               # CurrencyLayer uses USDEUR format
+        # For pairs already USD-quoted (USDCHF, USDCAD etc) use direct; for USD/EUR invert
+        if pair.startswith("USD"):
+            rate = quotes.get(key)
+            if not rate:
+                return None
+            return {"sym": yf_sym, "name": name, "price": round(rate, 6), "change": None, "changePct": None}
+        else:
+            # e.g. EURUSD: USDEUR rate stored as USDEUR, invert it
+            inv_key = "USD" + pair[3:] + pair[:3]  # EURUSD -> USDEUR? No...
+            # CurrencyLayer stores as USDEUR (source=USD, currency=EUR). Rate = EUR per 1 USD.
+            # So EUR/USD = 1 / (USD/EUR rate)
+            eur_per_usd = quotes.get("USD" + pair[:3])  # e.g. USDEUR
+            if not eur_per_usd or eur_per_usd == 0:
+                return None
+            rate = round(1.0 / eur_per_usd, 6)
+            return {"sym": yf_sym, "name": name, "price": rate, "change": None, "changePct": None}
+    except Exception:
+        return None
 
 def _fx_massive(yf_sym, name):
     try:
@@ -791,30 +1650,41 @@ def _fx_finnhub(yf_sym, name):
 
 @app.route("/api/fx")
 def forex():
-    pairs = [
-        ("EURUSD=X", "EUR/USD"), ("GBPUSD=X", "GBP/USD"), ("USDJPY=X", "USD/JPY"),
-        ("USDCHF=X", "USD/CHF"), ("AUDUSD=X", "AUD/USD"), ("USDCAD=X", "USD/CAD"),
-        ("NZDUSD=X", "NZD/USD"), ("USDCNY=X", "USD/CNY"), ("USDINR=X", "USD/INR"),
-        ("USDBRL=X", "USD/BRL"), ("USDMXN=X", "USD/MXN"), ("USDKRW=X", "USD/KRW"),
-    ]
+    tv = _tv_fx_scan()
     results = []
-    for sym, name in pairs:
-        row = _fx_massive(sym, name) or _fx_twelve_data(sym, name) or _fx_finnhub(sym, name)
+
+    for tv_sym, yf_sym, name in _TV_FX_PAIRS:
+        row = None
+
+        if tv and tv_sym in tv:
+            d = tv[tv_sym]
+            price = d.get("close")
+            if price:
+                row = {
+                    "sym":       yf_sym,
+                    "name":      name,
+                    "price":     price,
+                    "change":    d.get("change"),
+                    "changePct": d.get("change_percent"),
+                    "ytdPct":    None,
+                }
+
+        # Fallback to yfinance if TV scan failed or returned no price
         if not row:
             try:
-                t     = yf.Ticker(sym)
-                info  = t.info
+                info  = yf.Ticker(yf_sym).info
                 price = info.get("regularMarketPrice") or info.get("currentPrice")
                 prev  = info.get("previousClose")
-                chg   = (price - prev) if (price and prev) else None
-                pct   = ((chg / prev) * 100) if (chg and prev) else None
-                row   = {"sym": sym, "name": name, "price": price, "change": chg, "changePct": pct}
-            except:
+                chg   = round(price - prev, 5) if (price and prev) else None
+                pct   = round(chg / prev * 100, 4) if (chg and prev) else None
+                row   = {"sym": yf_sym, "name": name, "price": price,
+                         "change": chg, "changePct": pct, "ytdPct": None}
+            except Exception:
                 continue
-        if row:
-            results.append(row)
 
-    # Fetch YTD prices in parallel (cached after first call)
+        results.append(row)
+
+    # YTD via _ytd_price (yfinance, cached daily — only slow on first call of the day)
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
         futs = {ex.submit(_ytd_price, r["sym"]): i for i, r in enumerate(results)}
         for fut, i in futs.items():
@@ -822,7 +1692,7 @@ def forex():
                 ytd = fut.result(timeout=10)
                 p   = results[i].get("price")
                 results[i]["ytdPct"] = round((p - ytd) / ytd * 100, 2) if (ytd and p) else None
-            except:
+            except Exception:
                 results[i]["ytdPct"] = None
 
     return jsonify({"ok": True, "pairs": results})
@@ -840,7 +1710,7 @@ def fxmatrix():
     if _FXM_CACHE["data"] and now - _FXM_CACHE["ts"] < _FXM_TTL:
         return jsonify({"ok": True, **_FXM_CACHE["data"]})
 
-    # (sym, invert) — invert=True means price = X per USD, so usdRate = 1/price
+    # (yf_sym, invert) — invert=True means price = X per USD, so usdRate = 1/price
     ccy_map = {
         "USD": ("USD",      False),
         "EUR": ("EURUSD=X", False),
@@ -858,26 +1728,28 @@ def fxmatrix():
         "INR": ("USDINR=X", True),
     }
 
-    def fetch_rate(ccy, sym, invert):
-        if ccy == "USD":
-            return ccy, 1.0
-        try:
-            info = yf.Ticker(sym).info
-            p = info.get("regularMarketPrice") or info.get("currentPrice")
-            if not p:
-                return ccy, None
-            return ccy, round(1.0 / float(p), 8) if invert else round(float(p), 8)
-        except Exception:
-            return ccy, None
+    tv = _tv_fx_scan()
+    usd_rates = {"USD": 1.0}
 
-    usd_rates = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        futs = {ex.submit(fetch_rate, ccy, sym, inv): ccy
-                for ccy, (sym, inv) in ccy_map.items()}
-        for fut in concurrent.futures.as_completed(futs):
-            ccy, rate = fut.result()
-            if rate is not None:
-                usd_rates[ccy] = rate
+    for ccy, (yf_sym, invert) in ccy_map.items():
+        if ccy == "USD":
+            continue
+        p = None
+        # Try TV scan first
+        tv_sym = _TV_SYM_BY_YF.get(yf_sym)
+        if tv and tv_sym and tv.get(tv_sym, {}).get("close"):
+            p = float(tv[tv_sym]["close"])
+        else:
+            # Fallback to yfinance
+            try:
+                info = yf.Ticker(yf_sym).info
+                p = info.get("regularMarketPrice") or info.get("currentPrice")
+                if p:
+                    p = float(p)
+            except Exception:
+                pass
+        if p:
+            usd_rates[ccy] = round(1.0 / p, 8) if invert else round(p, 8)
 
     currencies = [c for c in ["USD","EUR","GBP","JPY","CHF","CAD","AUD","NZD",
                                "HKD","NOK","SEK","CNY","RUB","INR"] if c in usd_rates]
@@ -999,7 +1871,7 @@ def fx_perf():
 
 # ── GLCO Historical Period Performance ────────
 
-_GLCO_SYMS = ["GC=F","SI=F","PL=F","HG=F","CL=F","BZ=F","NG=F","ZW=F","ZC=F","ZS=F","KC=F","SB=F"]
+_GLCO_SYMS = ["GC=F","SI=F","PL=F","PA=F","HG=F","CL=F","BZ=F","NG=F","HO=F","RB=F","ZW=F","ZC=F","ZS=F","KC=F","SB=F","CC=F","CT=F","OJ=F","LE=F","HE=F"]
 
 _GLCP_CACHE = {"data": None, "date": None}
 _GLCR_CACHE = {}
@@ -1180,6 +2052,130 @@ def eqs_meta():
         return jsonify({"ok": False, "error": str(e)})
 
 _US_EXCHANGES = {"NMS", "NYQ", "ASE", "NGM", "NCM"}
+
+# ── SECF (Securities Finder) ──────────────────────────────────────────────────
+
+_SECF_CACHE = {}
+_SECF_TTL   = 30  # 30s
+
+_TV_SCAN_HDR = {
+    "Content-Type": "application/json",
+    "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Origin":       "https://www.tradingview.com",
+    "Referer":      "https://www.tradingview.com/",
+}
+
+# Correct TV scanner field names (verified):
+#   change     = Change %  (percentage, NOT absolute)
+#   change_abs = Absolute change ($)
+#   change     = Change %  (percentage)
+#   change_abs = Absolute change
+#   country field varies by scanner: stocks=country, futures/bonds=country_code, crypto=none
+_SECF_BASE_COLS  = ["name", "description", "close", "change_abs", "change", "exchange"]
+_SECF_STOCK_COLS = ["name", "description", "close", "change_abs", "change", "exchange", "country", "market_cap_basic", "sector"]
+_SECF_BOND_COLS  = ["name", "description", "close", "change_abs", "change", "exchange", "country_code", "coupon", "maturity_date"]
+_TV_SYMBOLS      = {"query": {"types": []}, "tickers": []}
+
+def _tv_scan(url, q, columns, extra_filter=None, limit=60, extra_payload=None):
+    # Build filter list: search + any extra filters merged into one array
+    flt = list(extra_filter) if extra_filter else []
+    if q:
+        flt.append({"left": "name,description", "operation": "match", "right": q})
+    payload = {
+        "columns": columns,
+        "options": {"lang": "en"},
+        "range":   [0, limit],
+        "symbols": _TV_SYMBOLS,
+    }
+    if flt:
+        payload["filter"] = flt
+    if extra_payload:
+        payload.update(extra_payload)
+    try:
+        r = requests.post(url, json=payload, headers=_TV_SCAN_HDR, timeout=8)
+        return r.json().get("data", []) if r.status_code == 200 else []
+    except Exception:
+        return []
+
+def _secf_parse(rows, columns, asset_type):
+    out = []
+    for row in rows:
+        sym  = row.get("s", "")
+        vals = row.get("d", [])
+        d    = {columns[i]: vals[i] for i in range(min(len(columns), len(vals)))}
+        price = d.get("close")
+        out.append({
+            "sym":       d.get("name") or sym.split(":")[-1],
+            "fullSym":   sym,
+            "name":      d.get("description", ""),
+            "exchange":  d.get("exchange", ""),
+            "country":   d.get("country") or d.get("country_code", ""),
+            "price":     price,
+            "change":    d.get("change_abs"),
+            "changePct": d.get("change"),
+            "type":      asset_type,
+            "coupon":    d.get("coupon"),
+            "maturity":  d.get("maturity_date"),
+            "market_cap": d.get("market_cap_basic"),
+            "sector":    d.get("sector"),
+        })
+    return out
+
+def _secf_fetch(t, q, limit, country="", sector=""):
+    if t == "stock":
+        flt = [{"left": "is_primary", "operation": "equal", "right": True}]
+        if country: flt.append({"left": "country", "operation": "equal", "right": country})
+        if sector:  flt.append({"left": "sector",  "operation": "equal", "right": sector})
+        extra = {"sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"}}
+        rows = _tv_scan("https://scanner.tradingview.com/global/scan", q, _SECF_STOCK_COLS,
+                        extra_filter=flt, limit=limit, extra_payload=extra)
+        return _secf_parse(rows, _SECF_STOCK_COLS, "stock")
+    if t == "futures":
+        return _secf_parse(_tv_scan("https://scanner.tradingview.com/futures/scan",  q, _SECF_BASE_COLS, limit=limit), _SECF_BASE_COLS, "futures")
+    if t == "forex":
+        return _secf_parse(_tv_scan("https://scanner.tradingview.com/forex/scan",    q, _SECF_BASE_COLS, limit=limit), _SECF_BASE_COLS, "forex")
+    if t == "crypto":
+        return _secf_parse(_tv_scan("https://scanner.tradingview.com/crypto/scan",   q, _SECF_BASE_COLS, limit=limit), _SECF_BASE_COLS, "crypto")
+    if t == "bond":
+        return _secf_parse(_tv_scan("https://scanner.tradingview.com/bonds/scan",    q, _SECF_BOND_COLS, limit=limit), _SECF_BOND_COLS, "bond")
+    if t == "index":
+        # Use query.types=["index"] in symbols payload — typespecs filter doesn't work
+        idx_syms = {"query": {"types": ["index"]}, "tickers": []}
+        rows = _tv_scan("https://scanner.tradingview.com/global/scan", q, _SECF_BASE_COLS,
+                        limit=limit, extra_payload={"symbols": idx_syms})
+        return _secf_parse(rows, _SECF_BASE_COLS, "index")
+    return []
+
+@app.route("/api/secf")
+def secf_search():
+    import time as _t
+    q          = request.args.get("q", "").strip()
+    asset_type = request.args.get("type", "all").lower()
+    limit      = min(int(request.args.get("limit", 60)), 100)
+    country    = request.args.get("country", "").strip()
+    sector     = request.args.get("sector", "").strip()
+    now        = _t.time()
+    cache_key  = f"{q}|{asset_type}|{limit}|{country}|{sector}"
+
+    c = _SECF_CACHE.get(cache_key)
+    if c and now - c["ts"] < _SECF_TTL:
+        return jsonify({"ok": True, **c["data"]})
+
+    if asset_type == "all":
+        results = []
+        types   = ["stock", "futures", "forex", "crypto", "bond", "index"]
+        per     = max(15, limit // len(types))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+            futs = {ex.submit(_secf_fetch, t, q, per, country, sector): t for t in types}
+            for fut in concurrent.futures.as_completed(futs):
+                try:    results.extend(fut.result(timeout=10))
+                except: pass
+    else:
+        results = _secf_fetch(asset_type, q, limit, country, sector)
+
+    data = {"results": results, "total": len(results)}
+    _SECF_CACHE[cache_key] = {"data": data, "ts": now}
+    return jsonify({"ok": True, **data})
 
 @app.route("/api/eqs")
 def screener():
@@ -1706,6 +2702,7 @@ _GC_FRED_TTL   = 3600
 
 TREASURY_TENORS = [
     ("1M",  "DGS1MO"),
+    ("2M",  "DGS2MO"),
     ("3M",  "DGS3MO"),
     ("6M",  "DGS6MO"),
     ("1Y",  "DGS1"),
@@ -1716,6 +2713,23 @@ TREASURY_TENORS = [
     ("10Y", "DGS10"),
     ("20Y", "DGS20"),
     ("30Y", "DGS30"),
+]
+
+TIPS_TENORS = [
+    ("5Y",  "DFII5"),
+    ("7Y",  "DFII7"),
+    ("10Y", "DFII10"),
+    ("20Y", "DFII20"),
+    ("30Y", "DFII30"),
+]
+
+SPREAD_SERIES = [
+    ("10Y2Y", "T10Y2Y"),
+    ("10Y3M", "T10Y3M"),
+]
+
+BREAKEVEN_SERIES = [
+    ("10Y", "T10YIE"),
 ]
 
 @app.route("/api/gc_fred")
@@ -1742,25 +2756,41 @@ def gc_fred():
         return out
 
     def fetch_tenor(label, series_id):
-        return label, fred_series(series_id, limit=300)
+        return label, fred_series(series_id, limit=365)
+
+    # Helper: find value at or before a target date for each label in a data dict
+    def snap(target_date_str, data_dict):
+        row = {}
+        for lbl, obs in data_dict.items():
+            hits = [o for o in obs if o["date"] <= target_date_str]
+            if hits: row[lbl] = hits[-1]["value"]
+        return row
 
     try:
-        series_data = {}  # label -> [{date,value}]
-        with concurrent.futures.ThreadPoolExecutor(max_workers=11) as ex:
-            futs = {ex.submit(fetch_tenor, lbl, sid): lbl for lbl, sid in TREASURY_TENORS}
+        # Fetch all series in one parallel pool:
+        # nominal treasury (12) + TIPS (5) + pre-computed spreads (2) + breakeven (1) = 20
+        all_fetches = (
+            [(lbl, sid, "nom")  for lbl, sid in TREASURY_TENORS] +
+            [(lbl, sid, "tips") for lbl, sid in TIPS_TENORS] +
+            [(lbl, sid, "spr")  for lbl, sid in SPREAD_SERIES] +
+            [(lbl, sid, "be")   for lbl, sid in BREAKEVEN_SERIES]
+        )
+        series_nom  = {}
+        series_tips = {}
+        series_spr  = {}
+        series_be   = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
+            futs = {ex.submit(fetch_tenor, lbl, sid): (lbl, grp)
+                    for lbl, sid, grp in all_fetches}
             for fut in concurrent.futures.as_completed(futs):
+                lbl, grp = futs[fut]
                 try:
-                    lbl, data = fut.result(timeout=15)
-                    series_data[lbl] = data
+                    _, data = fut.result(timeout=20)
+                    if grp == "nom":   series_nom[lbl]  = data
+                    elif grp == "tips": series_tips[lbl] = data
+                    elif grp == "spr":  series_spr[lbl]  = data
+                    elif grp == "be":   series_be[lbl]   = data
                 except: pass
-
-        # For each tenor, find the value at a given date (most recent on or before target)
-        def snap(target_date_str):
-            row = {}
-            for lbl, obs in series_data.items():
-                hits = [o for o in obs if o["date"] <= target_date_str]
-                if hits: row[lbl] = hits[-1]["value"]
-            return row
 
         # Compute target dates
         today = datetime.date.today()
@@ -1768,14 +2798,20 @@ def gc_fred():
             d = today - datetime.timedelta(days=days)
             return d.strftime("%Y-%m-%d")
 
+        today_str = today.strftime("%Y-%m-%d")
         result = {
-            "current": snap(today.strftime("%Y-%m-%d")),
-            "m1ago":   snap(biz_ago(30)),
-            "m3ago":   snap(biz_ago(91)),
-            "y1ago":   snap(biz_ago(365)),
-            "history": {lbl: obs for lbl, obs in series_data.items()},
-            "tenors":  [lbl for lbl, _ in TREASURY_TENORS],
-            "asOf":    today.strftime("%Y-%m-%d"),
+            "current":           snap(today_str,       series_nom),
+            "m1ago":             snap(biz_ago(30),     series_nom),
+            "m3ago":             snap(biz_ago(91),     series_nom),
+            "y1ago":             snap(biz_ago(365),    series_nom),
+            "history":           series_nom,
+            "tenors":            [lbl for lbl, _ in TREASURY_TENORS],
+            "asOf":              today_str,
+            "tips_history":      series_tips,
+            "tips_current":      snap(today_str,       series_tips),
+            "tips_m1ago":        snap(biz_ago(30),     series_tips),
+            "spread_history":    series_spr,
+            "breakeven_history": series_be,
         }
         _GC_FRED_CACHE["data"] = result
         _GC_FRED_CACHE["ts"]   = now
@@ -2628,101 +3664,59 @@ def _yield_curve_sovereign(country):
 
 
 # ── COMMODITY FORWARD CURVES ──────────────────────────
+_COMMOD_CURVE_CACHE = {}
+_COMMOD_CURVE_TTL   = 300  # 5 min
+
+_COMMOD_ROOT_MAP = {
+    'gold':     ('GC', 'USD/troy oz'),
+    'silver':   ('SI', 'USD/troy oz'),
+    'platinum': ('PL', 'USD/troy oz'),
+    'copper':   ('HG', 'USD/lb'),
+    'crude':    ('CL', 'USD/bbl'),
+    'brent':    ('BZ', 'USD/bbl'),
+    'natgas':   ('NG', 'USD/MMBtu'),
+    'wheat':    ('ZW', 'USc/bu'),
+    'corn':     ('ZC', 'USc/bu'),
+    'soybeans': ('ZS', 'USc/bu'),
+    'coffee':   ('KC', 'USc/lb'),
+    'sugar':    ('SB', 'USc/lb'),
+}
+
 @app.route("/api/commodity_curve/<commodity>")
 def commodity_curve(commodity):
-    """
-    Returns spot + available front months for a commodity.
-    Uses yfinance continuous front-month as spot, then tries named contract months.
-    Structure: contango (futures > spot) or backwardation (spot > futures).
-    """
-    CURVES = {
-        "crude":  {
-            "name": "WTI Crude Oil",
-            "tickers": ["CL=F", "CLM25.NYM", "CLU25.NYM", "CLZ25.NYM", "CLH26.NYM"],
-            "labels":  ["Spot", "Jun 25", "Sep 25", "Dec 25", "Mar 26"],
-            "unit": "USD/bbl"
-        },
-        "gold": {
-            "name": "Gold",
-            "tickers": ["GC=F", "GCM25.CMX", "GCZ25.CMX", "GCM26.CMX"],
-            "labels":  ["Spot", "Jun 25", "Dec 25", "Jun 26"],
-            "unit": "USD/troy oz"
-        },
-        "natgas": {
-            "name": "Natural Gas",
-            "tickers": ["NG=F", "NGM25.NYM", "NGU25.NYM", "NGZ25.NYM", "NGH26.NYM"],
-            "labels":  ["Spot", "Jun 25", "Sep 25", "Dec 25", "Mar 26"],
-            "unit": "USD/MMBtu"
-        },
-        "corn": {
-            "name": "Corn",
-            "tickers": ["ZC=F", "ZCN25.CBT", "ZCZ25.CBT", "ZCH26.CBT"],
-            "labels":  ["Spot", "Jul 25", "Dec 25", "Mar 26"],
-            "unit": "USc/bu"
-        },
-        "wheat": {
-            "name": "Wheat",
-            "tickers": ["ZW=F", "ZWN25.CBT", "ZWZ25.CBT", "ZWH26.CBT"],
-            "labels":  ["Spot", "Jul 25", "Dec 25", "Mar 26"],
-            "unit": "USc/bu"
-        },
-        "soybeans": {
-            "name": "Soybeans",
-            "tickers": ["ZS=F", "ZSN25.CBT", "ZSX25.CBT", "ZSH26.CBT"],
-            "labels":  ["Spot", "Jul 25", "Nov 25", "Mar 26"],
-            "unit": "USc/bu"
-        },
-        "copper": {
-            "name": "Copper",
-            "tickers": ["HG=F", "HGN25.CMX", "HGZ25.CMX"],
-            "labels":  ["Spot", "Jul 25", "Dec 25"],
-            "unit": "USD/lb"
-        },
-        "silver": {
-            "name": "Silver",
-            "tickers": ["SI=F", "SIN25.CMX", "SIZ25.CMX"],
-            "labels":  ["Spot", "Jul 25", "Dec 25"],
-            "unit": "USD/troy oz"
-        },
-    }
-
+    """Returns forward curve using dynamic chain (EODHD → yfinance roller). 5-min cache."""
+    import time as _t
+    now = _t.time()
     key = commodity.lower()
-    if key not in CURVES:
-        return jsonify({"ok": False, "error": f"Unknown commodity '{commodity}'. Options: {list(CURVES.keys())}"})
 
-    cfg = CURVES[key]
-    points = []
-    for i, sym in enumerate(cfg["tickers"]):
-        try:
-            t     = yf.Ticker(sym)
-            info  = t.info
-            price = info.get("regularMarketPrice") or info.get("currentPrice")
-            if price:
-                points.append({"label": cfg["labels"][i], "price": round(float(price), 4)})
-        except:
-            pass
+    if key not in _COMMOD_ROOT_MAP:
+        return jsonify({"ok": False, "error": f"Unknown commodity '{commodity}'. Options: {list(_COMMOD_ROOT_MAP.keys())}"})
 
-    if not points:
-        return jsonify({"ok": False, "error": "No price data available for this commodity curve."})
+    cached = _COMMOD_CURVE_CACHE.get(key)
+    if cached and now - cached["ts"] < _COMMOD_CURVE_TTL:
+        return jsonify({"ok": True, "cached": True, **cached["data"]})
 
-    spot   = points[0]["price"] if points else None
-    far    = points[-1]["price"] if len(points) > 1 else None
-    is_contango = (far and spot and far > spot)
-    spread_pct  = round(((far - spot) / spot) * 100, 2) if (far and spot) else None
+    root, unit = _COMMOD_ROOT_MAP[key]
+    chain = _chain_eodhd(root) or _chain_yf(root, num_months=10)
 
-    return jsonify({
-        "ok": True,
-        "commodity": key,
-        "name":      cfg["name"],
-        "unit":      cfg["unit"],
-        "points":    points,
-        "isContango":    is_contango,
-        "spreadPct":     spread_pct,
-        "structure":     "CONTANGO" if is_contango else "BACKWARDATION",
-        "structureNote": ("Futures trade above spot — implies storage cost premium, bearish carry signal."
-                          if is_contango else
-                          "Spot trades above futures — supply tightness, bullish carry signal.")
-    })
+    if not chain:
+        return jsonify({"ok": False, "error": f"No price data available for {key} curve."})
+
+    pts = [{"label": c["contract"], "price": c["last"],
+             "change": c.get("change"), "changePct": c.get("changePct"),
+             "oi": c.get("oi"), "volume": c.get("volume")}
+           for c in chain if c.get("last")]
+
+    if not pts:
+        return jsonify({"ok": False, "error": f"No price data available for {key} curve."})
+
+    spot = pts[0]["price"]
+    far  = pts[-1]["price"] if len(pts) > 1 else None
+    spread_pct = round(((far - spot) / spot) * 100, 2) if (far and spot) else None
+
+    result = {"commodity": key, "unit": unit, "points": pts, "spreadPct": spread_pct}
+    _COMMOD_CURVE_CACHE[key] = {"data": result, "ts": now}
+    return jsonify({"ok": True, **result})
 
 
 
@@ -4965,6 +5959,888 @@ def em_route(ticker):
         return jsonify({"ok": False, "error": str(e)})
 
 
+# ─────────────────────────────────────────────
+#  RES — Research Aggregator
+# ─────────────────────────────────────────────
+
+_RES_CACHE = {"data": None, "ts": 0}
+_RES_TTL   = 1800  # 30 minutes
+
+@app.route("/api/res")
+def research():
+    import time as _t
+    import research as _res
+    now = _t.time()
+    q        = (request.args.get("q")        or "").strip().lower()
+    category = (request.args.get("category") or "").strip()
+    inst     = (request.args.get("inst")     or "").strip()
+
+    if not _RES_CACHE["data"] or now - _RES_CACHE["ts"] > _RES_TTL:
+        papers = _res.scrape_all()
+        _RES_CACHE.update({"data": papers, "ts": now})
+
+    papers = list(_RES_CACHE["data"])
+
+    if q:
+        papers = [p for p in papers if q in p["title"].lower() or q in p.get("summary","").lower()]
+    if category:
+        papers = [p for p in papers if p["category"] == category]
+    if inst:
+        papers = [p for p in papers if inst.lower() in p["institution"].lower()]
+
+    return jsonify({"ok": True, "papers": papers[:150], "total": len(papers),
+                    "cached_at": _RES_CACHE["ts"]})
+
+
+@app.route("/api/res/refresh")
+def research_refresh():
+    import research as _res
+    import time as _t
+    papers = _res.scrape_all()
+    _RES_CACHE.update({"data": papers, "ts": _t.time()})
+    return jsonify({"ok": True, "total": len(papers)})
+
+
+@app.route("/api/res/pdf")
+def res_pdf_proxy():
+    """Proxy a PDF from an external URL to avoid browser CORS restrictions."""
+    from flask import Response as _Resp
+    url = (request.args.get("url") or "").strip()
+    if not url or not url.startswith("http"):
+        return jsonify({"error": "Invalid URL"}), 400
+    # Only allow PDF-looking URLs
+    if not re.search(r'\.pdf(\?|#|$)', url, re.I):
+        return jsonify({"error": "URL does not appear to be a PDF"}), 400
+    try:
+        hdrs = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/pdf,*/*",
+        }
+        r = requests.get(url, headers=hdrs, timeout=25, stream=True)
+        if r.status_code != 200:
+            return jsonify({"error": f"Remote returned {r.status_code}"}), 502
+        content_type = r.headers.get("Content-Type", "application/pdf")
+        if "pdf" not in content_type.lower():
+            content_type = "application/pdf"
+        return _Resp(
+            r.content,
+            status=200,
+            content_type=content_type,
+            headers={"Content-Disposition": "inline", "X-Frame-Options": "SAMEORIGIN"},
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+# ── ENERGY MARKET DATA (EIA v2 — broad-fetch, index locally) ─────────────────
+_ENERGY_CACHE = {"data": None, "ts": 0}
+_ENERGY_TTL   = 3600  # 1 hour — EIA reports weekly, prices update daily
+
+@app.route("/api/energy")
+def energy_data():
+    import time
+    now = time.time()
+    if _ENERGY_CACHE["data"] and now - _ENERGY_CACHE["ts"] < _ENERGY_TTL:
+        return jsonify({"ok": True, **_ENERGY_CACHE["data"]})
+
+    EIA_KEY = config.EIA_API_KEY or ""
+    if not EIA_KEY:
+        return jsonify({"ok": False, "error": "EIA API key not configured"})
+
+    def eia_fetch_broad(route, frequency="weekly", length=2000, extra_params=None, data_field="value"):
+        """Fetch EIA v2 route. params MUST be list-of-tuples for bracket notation."""
+        base = [
+            ("api_key", EIA_KEY),
+            ("frequency", frequency),
+            ("data[0]", data_field),
+            ("sort[0][column]", "period"),
+            ("sort[0][direction]", "desc"),
+            ("length", length),
+        ]
+        params = base + list(extra_params or [])
+        r = requests.get(f"https://api.eia.gov/v2/{route}", params=params, timeout=25)
+        r.raise_for_status()
+        return r.json().get("response", {}).get("data", [])
+
+    def index_rows(rows, keys, val_field="value"):
+        """Group rows into dict keyed by tuple of field values, sorted ascending by period."""
+        out = {}
+        for row in rows:
+            if row.get(val_field) in (None, ""):
+                continue
+            k = tuple(str(row.get(f, "")) for f in keys)
+            out.setdefault(k, []).append({"period": row["period"], "value": float(row[val_field])})
+        for v in out.values():
+            v.sort(key=lambda x: x["period"])
+        return out
+
+    def to_series(rows, val_field="value"):
+        """Parse raw EIA rows into sorted ascending {period, value} list."""
+        out = [{"period": r["period"], "value": float(r[val_field])}
+               for r in rows if r.get(val_field) not in (None, "")]
+        out.sort(key=lambda x: x["period"])
+        return out
+
+    def seasonal_stats(history, decimals=1):
+        """Returns last 52 points with avg5yr, min5yr, max5yr, std5yr per ISO week."""
+        if len(history) < 104:
+            return [{"period": r["period"], "value": r["value"],
+                     "avg5yr": None, "min5yr": None, "max5yr": None, "std5yr": None}
+                    for r in history[-52:]]
+        df = pd.DataFrame(history)
+        df["period"] = pd.to_datetime(df["period"])
+        df["week"] = df["period"].dt.isocalendar().week.astype(int)
+        df["year"] = df["period"].dt.year
+        recent = df.tail(52).copy()
+        rows = []
+        for _, row in recent.iterrows():
+            wk, yr = int(row["week"]), int(row["year"])
+            prior = df[(df["week"] == wk) & (df["year"].isin(range(yr - 5, yr)))]
+            if len(prior) >= 3:
+                avg = round(float(prior["value"].mean()), decimals)
+                mn  = round(float(prior["value"].min()),  decimals)
+                mx  = round(float(prior["value"].max()),  decimals)
+                std = round(float(prior["value"].std()),  decimals)
+            else:
+                avg = mn = mx = std = None
+            rows.append({"period": row["period"].strftime("%Y-%m-%d"),
+                         "value": round(float(row["value"]), decimals),
+                         "avg5yr": avg, "min5yr": mn, "max5yr": mx, "std5yr": std})
+        return rows
+
+    def kpi_from(history, ref_daily_rate=None):
+        """Extract KPIs including z-score, signal, and optional days-of-supply."""
+        if not history:
+            return {}
+        cur = history[-1]
+        prv = history[-2] if len(history) >= 2 else {}
+        val  = cur["value"]
+        wow  = round(val - prv.get("value", val), 1) if prv else None
+        avg5 = cur.get("avg5yr")
+        std5 = cur.get("std5yr")
+        surp = round(val - avg5, 1) if avg5 is not None else None
+        surp_pct = round(surp / avg5 * 100, 1) if (avg5 and surp is not None) else None
+        z    = round((val - avg5) / std5, 2) if (avg5 and std5) else None
+        days = round(val / ref_daily_rate, 1) if ref_daily_rate else None
+        signal, signal_dir = None, None
+        if wow is not None:
+            if wow < 0:
+                signal     = "STRONG DRAW" if (z is not None and z < -1) else "DRAW"
+                signal_dir = "bullish"
+            else:
+                signal     = "LARGE BUILD" if (z is not None and z > 1) else "BUILD"
+                signal_dir = "bearish"
+        return {
+            "value": val, "wowChange": wow, "avg5yr": avg5,
+            "min5yr": cur.get("min5yr"), "max5yr": cur.get("max5yr"),
+            "surplus": surp, "surplusPct": surp_pct, "zScore": z,
+            "daysSupply": days, "signal": signal, "signalDir": signal_dir,
+            "asOf": cur["period"],
+        }
+
+    def price_summary(hist, decimals=2):
+        if not hist:
+            return {}
+        cur = hist[-1]
+        prv = hist[-2] if len(hist) > 1 else hist[-1]
+        chg = round(cur["value"] - prv["value"], decimals)
+        pct = round(chg / prv["value"] * 100, 2) if prv["value"] else None
+        return {"value": round(cur["value"], decimals), "change": chg, "changePct": pct,
+                "asOf": cur["period"], "history": hist[-252:]}
+
+    def scale_kbbl(raw):
+        """Convert Kbbl list to Mbbl (÷1000)."""
+        return [{"period": r["period"], "value": round(r["value"] / 1000, 1)} for r in raw]
+
+    try:
+        # 5 broad parallel fetches — each covers a route; series extracted by key locally.
+        # Adding new metrics later costs zero extra API calls.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+            # Petroleum inventory: filter to the duoareas + products we track
+            f_inv   = ex.submit(eia_fetch_broad, "petroleum/stoc/wstk/data/", "weekly", 2000,
+                                [("facets[duoarea][]", "NUS"),
+                                 ("facets[duoarea][]", "YCUOK"),
+                                 ("facets[product][]", "EPC0"),
+                                 ("facets[product][]", "EPM0"),
+                                 ("facets[product][]", "EPD0"),
+                                 ("facets[process][]", "SAX"),
+                                 ("facets[process][]", "SAE")])
+            # Petroleum spot prices: WTI, Brent, RBOB, distillate (for crack spread)
+            f_price = ex.submit(eia_fetch_broad, "petroleum/pri/spt/data/", "daily", 2000,
+                                [("facets[product][]", "EPCWTI"),
+                                 ("facets[product][]", "EPCBRENT"),
+                                 ("facets[product][]", "EPMRR"),
+                                 ("facets[product][]", "EPD2F")])
+            # Natural gas storage (Lower 48 working gas)
+            f_gas   = ex.submit(eia_fetch_broad, "natural-gas/stor/wkly/data/", "weekly", 500,
+                                [("facets[duoarea][]", "R48"),
+                                 ("facets[process][]", "SWO")])
+            # Henry Hub natural gas futures (daily)
+            f_hh    = ex.submit(eia_fetch_broad, "natural-gas/pri/fut/data/", "daily", 500,
+                                [("facets[series][]", "RNGWHHD")])
+            # Refinery crude inputs (Kbbl/day, US total)
+            f_ref   = ex.submit(eia_fetch_broad, "petroleum/pnp/wiup/data/", "weekly", 104,
+                                [("facets[duoarea][]", "NUS")])
+            # Electricity generation by fuel type (monthly, EIA-923)
+            f_elec  = ex.submit(eia_fetch_broad,
+                                "electricity/electric-power-operational-data/data/",
+                                "monthly", 300,
+                                [("facets[location][]",   "US"),
+                                 ("facets[sectorid][]",   "99"),
+                                 ("facets[fueltypeid][]", "NG"),
+                                 ("facets[fueltypeid][]", "COW"),
+                                 ("facets[fueltypeid][]", "NUC"),
+                                 ("facets[fueltypeid][]", "WND"),
+                                 ("facets[fueltypeid][]", "SUN"),
+                                 ("facets[fueltypeid][]", "HYC"),
+                                 ("facets[fueltypeid][]", "ALL")],
+                                data_field="generation")
+
+        # Index inventory by (duoarea, product, process) — extract any combo instantly
+        inv_idx   = index_rows(f_inv.result(),   ["duoarea", "product", "process"])
+        price_idx = index_rows(f_price.result(), ["product"])
+        gas_idx   = index_rows(f_gas.result(),   ["duoarea", "process"])
+        hh_raw    = to_series(f_hh.result())
+        ref_rows  = to_series(f_ref.result())
+
+        # Named inventory series (raw Kbbl)
+        crude_raw    = inv_idx.get(("NUS",   "EPC0", "SAX"), [])
+        cushing_raw  = inv_idx.get(("YCUOK", "EPC0", "SAX"), [])
+        gasoline_raw = inv_idx.get(("NUS",   "EPM0", "SAE"), [])
+        distil_raw   = inv_idx.get(("NUS",   "EPD0", "SAE"), [])
+        gas_raw      = gas_idx.get(("R48",   "SWO"),          [])
+
+        # Named price series
+        wti_raw      = price_idx.get(("EPCWTI",),   [])
+        brent_raw    = price_idx.get(("EPCBRENT",), [])
+        rbob_raw     = price_idx.get(("EPMRR",),    [])
+        distil_price = price_idx.get(("EPD2F",),    [])
+
+        # Refinery crude inputs — take most recent row
+        ref_latest   = ref_rows[-1] if ref_rows else None
+        ref_daily    = ref_latest["value"] if ref_latest else None  # Kbbl/day
+
+        # Seasonal stats + KPIs (scale Kbbl → Mbbl before passing to seasonal_stats)
+        ref_daily_mbbl = (ref_daily / 1000) if ref_daily else None  # Mbbl/day for days-of-supply
+
+        crude_h      = seasonal_stats(scale_kbbl(crude_raw),    decimals=1)
+        crude_kpi    = kpi_from(crude_h, ref_daily_rate=ref_daily_mbbl)
+
+        cushing_h    = seasonal_stats(scale_kbbl(cushing_raw),   decimals=1)
+        cushing_kpi  = kpi_from(cushing_h)
+
+        gasoline_h   = seasonal_stats(scale_kbbl(gasoline_raw),  decimals=1)
+        gasoline_kpi = kpi_from(gasoline_h)
+
+        distil_h     = seasonal_stats(scale_kbbl(distil_raw),    decimals=1)
+        distil_kpi   = kpi_from(distil_h)
+
+        gas_h        = seasonal_stats(gas_raw, decimals=0)
+        gas_kpi      = kpi_from(gas_h)
+
+        # Price summaries
+        wti_s   = price_summary(wti_raw,   decimals=2)
+        brent_s = price_summary(brent_raw, decimals=2)
+        hh_s    = price_summary(hh_raw,    decimals=3)
+        rbob_s  = price_summary(rbob_raw,  decimals=4)
+
+        # Derived: WTI-Brent spread
+        wv = wti_s.get("value") or 0
+        bv = brent_s.get("value") or 0
+        spread = round(wv - bv, 2) if wv and bv else None
+
+        # Derived: 3-2-1 crack spread ($/bbl)
+        # RBOB and distillate price in $/gal × 42 = $/bbl
+        def latest_val(s): return s[-1]["value"] if s else None
+        rbob_bbl = (latest_val(rbob_raw) or 0) * 42
+        dist_bbl = (latest_val(distil_price) or 0) * 42
+        crack321 = (round((2 * rbob_bbl + dist_bbl - 3 * wv) / 3, 2)
+                    if wv and rbob_bbl and dist_bbl else None)
+
+        # --- Electricity generation by fuel type ---
+        electricity_section = {}
+        try:
+            elec_idx = index_rows(f_elec.result(), ["fueltypeid"], val_field="generation")
+
+            def elec_summary(series):
+                """Monthly generation series → latest value, YoY change, 24-month history."""
+                if not series:
+                    return {"value": None, "yoy": None, "yoyPct": None, "asOf": None, "history": []}
+                latest = series[-1]
+                tgt_period = f"{int(latest['period'][:4]) - 1}{latest['period'][4:]}"
+                yr_ago = next((r for r in reversed(series) if r["period"] <= tgt_period), None)
+                yoy = round(latest["value"] - yr_ago["value"], 0) if yr_ago else None
+                yoy_pct = round(yoy / yr_ago["value"] * 100, 1) if (yoy is not None and yr_ago["value"]) else None
+                return {
+                    "value":   round(latest["value"], 0),
+                    "yoy":     yoy,
+                    "yoyPct":  yoy_pct,
+                    "asOf":    latest["period"],
+                    "history": series[-24:],
+                }
+
+            gas_gen  = elec_summary(elec_idx.get(("NG",),  []))
+            coal_gen = elec_summary(elec_idx.get(("COW",), []))
+            nuc_gen  = elec_summary(elec_idx.get(("NUC",), []))
+            wind_gen = elec_summary(elec_idx.get(("WND",), []))
+            sun_gen  = elec_summary(elec_idx.get(("SUN",), []))
+            hyd_gen  = elec_summary(elec_idx.get(("HYC",), []))
+            all_gen  = elec_summary(elec_idx.get(("ALL",), []))
+
+            gas_pct = (round(gas_gen["value"] / all_gen["value"] * 100, 1)
+                       if (gas_gen["value"] and all_gen["value"]) else None)
+
+            electricity_section = {
+                "gas":     gas_gen,
+                "coal":    coal_gen,
+                "nuclear": nuc_gen,
+                "wind":    wind_gen,
+                "solar":   sun_gen,
+                "hydro":   hyd_gen,
+                "total":   all_gen,
+                "gasPct":  gas_pct,
+            }
+        except Exception:
+            pass  # electricity data is supplementary — don't fail the whole endpoint
+
+        result = {
+            "crude":       {**crude_kpi,    "history": crude_h},
+            "cushing":     {**cushing_kpi,  "history": cushing_h},
+            "gasoline":    {**gasoline_kpi, "history": gasoline_h},
+            "distillate":  {**distil_kpi,   "history": distil_h},
+            "gasStorage":  {**gas_kpi,      "history": gas_h},
+            "electricity": electricity_section,
+            "prices": {
+                "wti":             wti_s,
+                "brent":           brent_s,
+                "henryHub":        hh_s,
+                "rbob":            rbob_s,
+                "wtisBrentSpread": spread,
+                "crack321":        crack321,
+            },
+            "refinery": {
+                "crudeInputs": ref_daily,
+                "asOf": ref_latest["period"] if ref_latest else None,
+            },
+        }
+        _ENERGY_CACHE["data"] = result
+        _ENERGY_CACHE["ts"]   = now
+        return jsonify({"ok": True, **result})
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  EIA DETAILED ENDPOINTS — Feed GC workspace panels
+# ─────────────────────────────────────────────────────────────────────────────
+
+_NG_CACHE: dict = {"data": None, "ts": 0}
+_NG_TTL = 3600
+
+@app.route("/api/eia/ng")
+def eia_ng():
+    """Nat gas fundamentals: regional storage (seasonal), production, consumption by sector, HH price."""
+    import time as _t
+    now = _t.time()
+    if _NG_CACHE["data"] and now - _NG_CACHE["ts"] < _NG_TTL:
+        return jsonify({"ok": True, **_NG_CACHE["data"]})
+
+    EIA_KEY = config.EIA_API_KEY or ""
+    if not EIA_KEY:
+        return jsonify({"ok": False, "error": "EIA API key not configured"})
+
+    def _get(route, frequency="weekly", length=300, extra=None, field="value"):
+        base = [("api_key", EIA_KEY), ("frequency", frequency), ("data[0]", field),
+                ("sort[0][column]", "period"), ("sort[0][direction]", "desc"), ("length", length)]
+        r = requests.get(f"https://api.eia.gov/v2/{route}", params=base + list(extra or []), timeout=20)
+        r.raise_for_status()
+        return r.json().get("response", {}).get("data", [])
+
+    def _series(rows, field="value"):
+        out = [{"period": r["period"], "value": float(r[field])}
+               for r in rows if r.get(field) not in (None, "")]
+        out.sort(key=lambda x: x["period"])
+        return out
+
+    def _seasonal(history, decimals=1):
+        if len(history) < 104:
+            return [{"period": r["period"], "value": r["value"],
+                     "avg5yr": None, "min5yr": None, "max5yr": None, "std5yr": None}
+                    for r in history[-52:]]
+        df = pd.DataFrame(history)
+        df["period"] = pd.to_datetime(df["period"])
+        df["week"]   = df["period"].dt.isocalendar().week.astype(int)
+        df["year"]   = df["period"].dt.year
+        out = []
+        for _, row in df.tail(52).iterrows():
+            wk, yr = int(row["week"]), int(row["year"])
+            prior  = df[(df["week"] == wk) & (df["year"].isin(range(yr - 5, yr)))]
+            avg, mn, mx, std = (None, None, None, None) if len(prior) < 3 else (
+                round(float(prior["value"].mean()), decimals),
+                round(float(prior["value"].min()),  decimals),
+                round(float(prior["value"].max()),  decimals),
+                round(float(prior["value"].std()),  decimals),
+            )
+            out.append({"period": row["period"].strftime("%Y-%m-%d"),
+                        "value": round(float(row["value"]), decimals),
+                        "avg5yr": avg, "min5yr": mn, "max5yr": mx, "std5yr": std})
+        return out
+
+    def _kpi(history):
+        empty = {"value": None, "wowChange": None, "surplus": None, "surplusPct": None,
+                 "zScore": None, "signal": None, "signalDir": None, "asOf": None,
+                 "avg5yr": None, "min5yr": None, "max5yr": None}
+        if not history: return empty
+        cur = history[-1]; prv = history[-2] if len(history) >= 2 else {}
+        val  = cur["value"]
+        wow  = round(val - prv.get("value", val), 1) if prv else None
+        avg5 = cur.get("avg5yr"); std5 = cur.get("std5yr")
+        surp = round(val - avg5, 1) if avg5 is not None else None
+        surp_pct = round(surp / avg5 * 100, 1) if (avg5 and surp is not None) else None
+        z    = round((val - avg5) / std5, 2) if (avg5 and std5) else None
+        sig, dir_ = None, None
+        if wow is not None:
+            if wow < 0: sig = "STRONG DRAW" if (z is not None and z < -1) else "DRAW"; dir_ = "bullish"
+            else:       sig = "LARGE BUILD"  if (z is not None and z > 1)  else "BUILD"; dir_ = "bearish"
+        return {"value": val, "wowChange": wow, "avg5yr": avg5,
+                "min5yr": cur.get("min5yr"), "max5yr": cur.get("max5yr"),
+                "surplus": surp, "surplusPct": surp_pct, "zScore": z,
+                "signal": sig, "signalDir": dir_, "asOf": cur["period"]}
+
+    def _price(hist, dec=3):
+        if not hist: return {"value": None, "change": None, "changePct": None, "asOf": None, "history": []}
+        cur = hist[-1]; prv = hist[-2] if len(hist) > 1 else hist[-1]
+        chg = round(cur["value"] - prv["value"], dec)
+        pct = round(chg / prv["value"] * 100, 2) if prv["value"] else None
+        return {"value": round(cur["value"], dec), "change": chg, "changePct": pct,
+                "asOf": cur["period"], "history": hist[-365:]}
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+            # Storage: R48=L48, Y35NY=East, Y50LA=South Central, Y20LA=West
+            f_stor = ex.submit(_get, "natural-gas/stor/wkly/data/", "weekly", 400,
+                [("facets[duoarea][]", "R48"), ("facets[duoarea][]", "Y35NY"),
+                 ("facets[duoarea][]", "Y50LA"), ("facets[duoarea][]", "Y20LA"),
+                 ("facets[process][]", "SWO")])
+            # Dry gas production (Mmcf/month)
+            f_prod = ex.submit(_get, "natural-gas/prod/sum/data/", "monthly", 72,
+                [("facets[duoarea][]", "NUS"), ("facets[series][]", "N9010US2")])
+            # Consumption by sector (Mmcf/month)
+            f_cons = ex.submit(_get, "natural-gas/cons/sum/data/", "monthly", 72,
+                [("facets[duoarea][]", "NUS"),
+                 ("facets[series][]", "N3020US2"), ("facets[series][]", "N3035US2"),
+                 ("facets[series][]", "N3010US2"), ("facets[series][]", "N3060US2")])
+            # Henry Hub daily
+            f_hh   = ex.submit(_get, "natural-gas/pri/fut/data/", "daily", 500,
+                [("facets[series][]", "RNGWHHD")])
+
+        stor_rows = f_stor.result()
+        prod_rows = f_prod.result()
+        cons_rows = f_cons.result()
+        hh_raw    = _series(f_hh.result())
+
+        def build_stor(duoarea):
+            rows = sorted([r for r in stor_rows if str(r.get("duoarea", "")) == duoarea],
+                          key=lambda x: x["period"])
+            s = [{"period": r["period"], "value": float(r["value"])}
+                 for r in rows if r.get("value") not in (None, "")]
+            h = _seasonal(s) if len(s) >= 52 else \
+                [{"period": r["period"], "value": r["value"],
+                  "avg5yr": None, "min5yr": None, "max5yr": None, "std5yr": None}
+                 for r in s[-52:]]
+            return {**_kpi(h), "history": h}
+
+        # Production: Mmcf/month → Bcf/d
+        prod_s = sorted([{"period": r["period"],
+                           "value": round(float(r["value"]) / 1000 / 30.44, 2)}
+                          for r in prod_rows if r.get("value") not in (None, "")],
+                         key=lambda x: x["period"])
+        prod_kpi = {"value_bcfd": prod_s[-1]["value"] if prod_s else None,
+                    "asOf": prod_s[-1]["period"] if prod_s else None,
+                    "history": prod_s[-60:]}
+
+        # Consumption: Mmcf/month → Bcf/d by series code
+        def build_cons(series_code):
+            rows = sorted([r for r in cons_rows if str(r.get("series", "")) == series_code],
+                          key=lambda x: x["period"])
+            s = [{"period": r["period"],
+                  "value": round(float(r["value"]) / 1000 / 30.44, 2)}
+                 for r in rows if r.get("value") not in (None, "")]
+            return {"value_bcfd": s[-1]["value"] if s else None,
+                    "asOf": s[-1]["period"] if s else None, "history": s[-60:]}
+
+        result = {
+            "storage": {
+                "l48":   build_stor("R48"),
+                "east":  build_stor("Y35NY"),
+                "south": build_stor("Y50LA"),
+                "west":  build_stor("Y20LA"),
+            },
+            "production": {"total": prod_kpi},
+            "consumption": {
+                "electric_power": build_cons("N3020US2"),
+                "industrial":     build_cons("N3035US2"),
+                "residential":    build_cons("N3010US2"),
+                "total":          build_cons("N3060US2"),
+            },
+            "prices": {"henryHub": _price(hh_raw, dec=3)},
+        }
+        _NG_CACHE.update({"data": result, "ts": now})
+        return jsonify({"ok": True, **result})
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()})
+
+
+_PETRO_CACHE: dict = {"data": None, "ts": 0}
+_PETRO_TTL = 3600
+
+@app.route("/api/eia/petroleum")
+def eia_petroleum():
+    """Crude fundamentals: stocks (seasonal), production, refinery util, product supplied, trade, prices."""
+    import time as _t
+    now = _t.time()
+    if _PETRO_CACHE["data"] and now - _PETRO_CACHE["ts"] < _PETRO_TTL:
+        return jsonify({"ok": True, **_PETRO_CACHE["data"]})
+
+    EIA_KEY = config.EIA_API_KEY or ""
+    if not EIA_KEY:
+        return jsonify({"ok": False, "error": "EIA API key not configured"})
+
+    def _get(route, frequency="weekly", length=2000, extra=None, field="value"):
+        base = [("api_key", EIA_KEY), ("frequency", frequency), ("data[0]", field),
+                ("sort[0][column]", "period"), ("sort[0][direction]", "desc"), ("length", length)]
+        r = requests.get(f"https://api.eia.gov/v2/{route}", params=base + list(extra or []), timeout=25)
+        r.raise_for_status()
+        return r.json().get("response", {}).get("data", [])
+
+    def _idx(rows, keys, vf="value"):
+        out = {}
+        for row in rows:
+            if row.get(vf) in (None, ""): continue
+            k = tuple(str(row.get(f, "")) for f in keys)
+            out.setdefault(k, []).append({"period": row["period"], "value": float(row[vf])})
+        for v in out.values(): v.sort(key=lambda x: x["period"])
+        return out
+
+    def _series(rows, vf="value"):
+        out = [{"period": r["period"], "value": float(r[vf])} for r in rows if r.get(vf) not in (None, "")]
+        out.sort(key=lambda x: x["period"])
+        return out
+
+    def _seasonal(history, decimals=1):
+        if len(history) < 104:
+            return [{"period": r["period"], "value": r["value"],
+                     "avg5yr": None, "min5yr": None, "max5yr": None, "std5yr": None}
+                    for r in history[-52:]]
+        df = pd.DataFrame(history)
+        df["period"] = pd.to_datetime(df["period"])
+        df["week"] = df["period"].dt.isocalendar().week.astype(int)
+        df["year"] = df["period"].dt.year
+        out = []
+        for _, row in df.tail(52).iterrows():
+            wk, yr = int(row["week"]), int(row["year"])
+            prior  = df[(df["week"] == wk) & (df["year"].isin(range(yr - 5, yr)))]
+            avg, mn, mx, std = (None, None, None, None) if len(prior) < 3 else (
+                round(float(prior["value"].mean()), decimals), round(float(prior["value"].min()), decimals),
+                round(float(prior["value"].max()), decimals), round(float(prior["value"].std()), decimals),
+            )
+            out.append({"period": row["period"].strftime("%Y-%m-%d"),
+                        "value": round(float(row["value"]), decimals),
+                        "avg5yr": avg, "min5yr": mn, "max5yr": mx, "std5yr": std})
+        return out
+
+    def _kpi(history, ref_rate=None):
+        empty = {"value": None, "wowChange": None, "surplus": None, "surplusPct": None,
+                 "zScore": None, "signal": None, "signalDir": None, "asOf": None}
+        if not history: return empty
+        cur = history[-1]; prv = history[-2] if len(history) >= 2 else {}
+        val = cur["value"]
+        wow = round(val - prv.get("value", val), 1) if prv else None
+        avg5 = cur.get("avg5yr"); std5 = cur.get("std5yr")
+        surp = round(val - avg5, 1) if avg5 is not None else None
+        surp_pct = round(surp / avg5 * 100, 1) if (avg5 and surp is not None) else None
+        z = round((val - avg5) / std5, 2) if (avg5 and std5) else None
+        days = round(val / ref_rate, 1) if ref_rate else None
+        sig, dir_ = None, None
+        if wow is not None:
+            if wow < 0: sig = "STRONG DRAW" if (z is not None and z < -1) else "DRAW"; dir_ = "bullish"
+            else:       sig = "LARGE BUILD"  if (z is not None and z > 1)  else "BUILD"; dir_ = "bearish"
+        return {"value": val, "wowChange": wow, "avg5yr": avg5,
+                "min5yr": cur.get("min5yr"), "max5yr": cur.get("max5yr"),
+                "surplus": surp, "surplusPct": surp_pct, "zScore": z,
+                "daysSupply": days, "signal": sig, "signalDir": dir_, "asOf": cur["period"]}
+
+    def _price(hist, dec=2):
+        if not hist: return {"value": None, "change": None, "changePct": None, "asOf": None, "history": []}
+        cur = hist[-1]; prv = hist[-2] if len(hist) > 1 else hist[-1]
+        chg = round(cur["value"] - prv["value"], dec)
+        pct = round(chg / prv["value"] * 100, 2) if prv["value"] else None
+        return {"value": round(cur["value"], dec), "change": chg, "changePct": pct,
+                "asOf": cur["period"], "history": hist[-365:]}
+
+    def scale_kbbl(raw):
+        return [{"period": r["period"], "value": round(r["value"] / 1000, 1)} for r in raw]
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
+            f_inv   = ex.submit(_get, "petroleum/stoc/wstk/data/", "weekly", 2000,
+                [("facets[duoarea][]", "NUS"), ("facets[duoarea][]", "YCUOK"),
+                 ("facets[product][]", "EPC0"), ("facets[product][]", "EPM0"),
+                 ("facets[product][]", "EPD0"), ("facets[process][]", "SAX"),
+                 ("facets[process][]", "SAE")])
+            f_price = ex.submit(_get, "petroleum/pri/spt/data/", "daily", 1000,
+                [("facets[product][]", "EPCWTI"), ("facets[product][]", "EPCBRENT"),
+                 ("facets[product][]", "EPMRR"),  ("facets[product][]", "EPD2F")])
+            f_ref   = ex.submit(_get, "petroleum/pnp/wiup/data/", "weekly", 208,
+                [("facets[duoarea][]", "NUS")])
+            # Crude production (monthly, Kbbl)
+            f_prod  = ex.submit(_get, "petroleum/crd/crpdn/data/", "monthly", 60,
+                [("facets[duoarea][]", "NUS-Z00")])
+            # Product supplied proxy (weekly, Kbbl/d)
+            f_psup  = ex.submit(_get, "petroleum/cons/wpsup/data/", "weekly", 208,
+                [("facets[duoarea][]", "NUS"),
+                 ("facets[product][]", "EPM0F"),  # gasoline
+                 ("facets[product][]", "EPD0"),   # distillate
+                 ("facets[product][]", "ESRX0")]) # total
+            # Crude imports (monthly, Kbbl)
+            f_imp   = ex.submit(_get, "petroleum/move/imp/mb/des/data/", "monthly", 60,
+                [("facets[destinationType][]", "total")])
+            # Crude exports (monthly, Kbbl)
+            f_exp   = ex.submit(_get, "petroleum/move/exp/dc/des/data/", "monthly", 60,
+                [("facets[destinationType][]", "total")])
+
+        inv_idx   = _idx(f_inv.result(),   ["duoarea", "product", "process"])
+        price_idx = _idx(f_price.result(), ["product"])
+
+        crude_raw    = inv_idx.get(("NUS",   "EPC0", "SAX"), [])
+        cushing_raw  = inv_idx.get(("YCUOK", "EPC0", "SAX"), [])
+        gasoline_raw = inv_idx.get(("NUS",   "EPM0", "SAE"), [])
+        distil_raw   = inv_idx.get(("NUS",   "EPD0", "SAE"), [])
+
+        wti_raw   = price_idx.get(("EPCWTI",),   [])
+        brent_raw = price_idx.get(("EPCBRENT",), [])
+        rbob_raw  = price_idx.get(("EPMRR",),    [])
+        dist_px   = price_idx.get(("EPD2F",),    [])
+
+        ref_rows = _series(f_ref.result())
+        ref_val  = ref_rows[-1]["value"] if ref_rows else None
+        ref_mbbl = (ref_val / 1000) if ref_val else None   # Mbbl/day for days-supply
+
+        crude_h   = _seasonal(scale_kbbl(crude_raw),    1)
+        cush_h    = _seasonal(scale_kbbl(cushing_raw),  1)
+        gas_h     = _seasonal(scale_kbbl(gasoline_raw), 1)
+        dist_h    = _seasonal(scale_kbbl(distil_raw),   1)
+
+        crude_kpi  = _kpi(crude_h, ref_rate=ref_mbbl)
+        cush_kpi   = _kpi(cush_h)
+        gas_kpi    = _kpi(gas_h)
+        dist_kpi   = _kpi(dist_h)
+
+        wti_s   = _price(wti_raw,   2)
+        brent_s = _price(brent_raw, 2)
+        rbob_s  = _price(rbob_raw,  4)
+
+        # WTI-Brent spread as time series
+        wti_map = {r["period"]: r["value"] for r in wti_raw}
+        wb_spread_h = [{"period": r["period"], "value": round(wti_map[r["period"]] - r["value"], 2)}
+                       for r in brent_raw if r["period"] in wti_map]
+        wb_spread_h.sort(key=lambda x: x["period"])
+
+        # 3-2-1 crack spread
+        rbob_lat = rbob_raw[-1]["value"] if rbob_raw else None
+        dist_lat = dist_px[-1]["value"] if dist_px else None
+        wti_lat  = wti_raw[-1]["value"] if wti_raw else None
+        crack321 = (round((2 * rbob_lat * 42 + dist_lat * 42 - 3 * wti_lat) / 3, 2)
+                    if all(v is not None for v in [rbob_lat, dist_lat, wti_lat]) else None)
+
+        # Crude production (monthly Kbbl → Kbd/day)
+        prod_rows = f_prod.result()
+        prod_s = sorted([{"period": r["period"],
+                           "value": round(float(r["value"]) / 30.44, 0)}
+                          for r in prod_rows if r.get("value") not in (None, "")],
+                         key=lambda x: x["period"])
+
+        # Refinery utilization: inputs / national operable capacity (rough const ~18500 Kbd)
+        # Using inputs-only series as percentage proxy
+        ref_util_h = [{"period": r["period"],
+                        "value": round(r["value"] / 18500 * 100, 1)}
+                       for r in ref_rows if r.get("value") is not None]
+
+        # Product supplied
+        psup_idx = _idx(f_psup.result(), ["product"])
+        gas_sup = psup_idx.get(("EPM0F",),  [])
+        dis_sup = psup_idx.get(("EPD0",),   [])
+
+        # Trade (monthly, Kbbl — convert to Kbd)
+        try:
+            imp_rows = _series(f_imp.result())
+            exp_rows = _series(f_exp.result())
+            imp_s = [{"period": r["period"], "value": round(r["value"] / 30.44, 0)} for r in imp_rows]
+            exp_s = [{"period": r["period"], "value": round(r["value"] / 30.44, 0)} for r in exp_rows]
+        except Exception:
+            imp_s, exp_s = [], []
+
+        result = {
+            "stocks": {
+                "crude":      {**crude_kpi,  "history": crude_h},
+                "cushing":    {**cush_kpi,   "history": cush_h},
+                "gasoline":   {**gas_kpi,    "history": gas_h},
+                "distillate": {**dist_kpi,   "history": dist_h},
+            },
+            "production": {
+                "history": prod_s[-60:],
+                "value":   prod_s[-1]["value"] if prod_s else None,
+                "asOf":    prod_s[-1]["period"] if prod_s else None,
+            },
+            "refinery": {
+                "inputs":      {"value": ref_val, "asOf": ref_rows[-1]["period"] if ref_rows else None},
+                "utilization": {"history": ref_util_h[-104:]},
+            },
+            "productSupplied": {
+                "gasoline":   {"history": gas_sup[-104:]},
+                "distillate": {"history": dis_sup[-104:]},
+            },
+            "trade": {
+                "imports": {"history": imp_s[-60:]},
+                "exports": {"history": exp_s[-60:]},
+            },
+            "prices": {
+                "wti":       wti_s,
+                "brent":     brent_s,
+                "rbob":      rbob_s,
+                "wtisBrent": {"history": wb_spread_h[-252:],
+                               "value": wb_spread_h[-1]["value"] if wb_spread_h else None},
+                "crack321":  crack321,
+            },
+        }
+        _PETRO_CACHE.update({"data": result, "ts": now})
+        return jsonify({"ok": True, **result})
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()})
+
+
+_ELEC_CACHE: dict = {"data": None, "ts": 0}
+_ELEC_TTL = 3600
+
+@app.route("/api/eia/electricity")
+def eia_electricity():
+    """Power market: generation mix (monthly EIA-923), nuclear generation trend."""
+    import time as _t
+    now = _t.time()
+    if _ELEC_CACHE["data"] and now - _ELEC_CACHE["ts"] < _ELEC_TTL:
+        return jsonify({"ok": True, **_ELEC_CACHE["data"]})
+
+    EIA_KEY = config.EIA_API_KEY or ""
+    if not EIA_KEY:
+        return jsonify({"ok": False, "error": "EIA API key not configured"})
+
+    def _get(route, frequency="monthly", length=300, extra=None, field="generation"):
+        base = [("api_key", EIA_KEY), ("frequency", frequency), ("data[0]", field),
+                ("sort[0][column]", "period"), ("sort[0][direction]", "desc"), ("length", length)]
+        r = requests.get(f"https://api.eia.gov/v2/{route}", params=base + list(extra or []), timeout=25)
+        r.raise_for_status()
+        return r.json().get("response", {}).get("data", [])
+
+    def _idx(rows, keys, vf="generation"):
+        out = {}
+        for row in rows:
+            if row.get(vf) in (None, ""): continue
+            k = tuple(str(row.get(f, "")) for f in keys)
+            out.setdefault(k, []).append({"period": row["period"], "value": float(row[vf])})
+        for v in out.values(): v.sort(key=lambda x: x["period"])
+        return out
+
+    def _elec_summary(series):
+        if not series:
+            return {"value": None, "yoy": None, "yoyPct": None, "asOf": None, "history": []}
+        latest = series[-1]
+        tgt = f"{int(latest['period'][:4]) - 1}{latest['period'][4:]}"
+        yr_ago = next((r for r in reversed(series) if r["period"] <= tgt), None)
+        yoy = round(latest["value"] - yr_ago["value"], 0) if yr_ago else None
+        yoy_pct = round(yoy / yr_ago["value"] * 100, 1) if (yoy is not None and yr_ago and yr_ago["value"]) else None
+        return {"value": round(latest["value"], 0), "yoy": yoy, "yoyPct": yoy_pct,
+                "asOf": latest["period"], "history": series[-30:]}
+
+    try:
+        elec_rows = _get("electricity/electric-power-operational-data/data/", "monthly", 300,
+            [("facets[location][]",   "US"),   ("facets[sectorid][]",   "99"),
+             ("facets[fueltypeid][]", "NG"),   ("facets[fueltypeid][]", "COW"),
+             ("facets[fueltypeid][]", "NUC"),  ("facets[fueltypeid][]", "WND"),
+             ("facets[fueltypeid][]", "SUN"),  ("facets[fueltypeid][]", "HYC"),
+             ("facets[fueltypeid][]", "ALL")],
+            field="generation")
+
+        elec_idx = _idx(elec_rows, ["fueltypeid"])
+        gas_gen  = _elec_summary(elec_idx.get(("NG",),  []))
+        coal_gen = _elec_summary(elec_idx.get(("COW",), []))
+        nuc_gen  = _elec_summary(elec_idx.get(("NUC",), []))
+        wind_gen = _elec_summary(elec_idx.get(("WND",), []))
+        solar_gen= _elec_summary(elec_idx.get(("SUN",), []))
+        hyd_gen  = _elec_summary(elec_idx.get(("HYC",), []))
+        all_gen  = _elec_summary(elec_idx.get(("ALL",), []))
+
+        gas_pct  = (round(gas_gen["value"] / all_gen["value"] * 100, 1)
+                    if (gas_gen["value"] and all_gen["value"]) else None)
+
+        # Nuclear offline proxy: nuclear share decline vs 5yr avg (simple indicator)
+        nuc_h = elec_idx.get(("NUC",), [])
+        all_h = elec_idx.get(("ALL",), [])
+        all_map = {r["period"]: r["value"] for r in all_h}
+        nuc_pct_h = [{"period": r["period"],
+                       "value": round(r["value"] / all_map[r["period"]] * 100, 1)}
+                      for r in nuc_h if r["period"] in all_map and all_map[r["period"]]]
+        nuc_pct_h.sort(key=lambda x: x["period"])
+
+        result = {
+            "generation": {
+                "gas":     gas_gen,
+                "coal":    coal_gen,
+                "nuclear": nuc_gen,
+                "wind":    wind_gen,
+                "solar":   solar_gen,
+                "hydro":   hyd_gen,
+                "total":   all_gen,
+                "gasPct":  gas_pct,
+            },
+            "demand": {
+                "actual":   {"history": all_gen["history"]},  # total gen as demand proxy
+                "forecast": {"history": []},                   # Phase 2: EIA RTO data
+            },
+            "nuclear": {
+                "capacityOfflinePct": {"history": nuc_pct_h[-30:],
+                                       "value":   nuc_pct_h[-1]["value"] if nuc_pct_h else None},
+            },
+        }
+        _ELEC_CACHE.update({"data": result, "ts": now})
+        return jsonify({"ok": True, **result})
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()})
+
+
+@app.route("/api/eia/nuclear")
+def eia_nuclear():
+    """Nuclear outage proxy — nuclear share of US generation (EIA-923 monthly)."""
+    import time as _t
+    # Delegate to /api/eia/electricity and extract nuclear section
+    try:
+        resp = eia_electricity()
+        data = resp.get_json()
+        if not data.get("ok"):
+            return resp
+        nuc = data.get("nuclear", {})
+        nuc_gen = data.get("generation", {}).get("nuclear", {})
+        return jsonify({"ok": True,
+                        "capacityOfflinePct": nuc.get("capacityOfflinePct", {}).get("value"),
+                        "asOf":               nuc_gen.get("asOf"),
+                        "history":            nuc.get("capacityOfflinePct", {}).get("history", [])})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 if __name__ == "__main__":
     print("\n" + "="*52)
     print("  KINETIC TERMINAL -- Backend Online")
@@ -4972,4 +6848,4 @@ if __name__ == "__main__":
     print("  Data: Yahoo Finance (~10-15min delay)")
     print("  Bond tickers: Reuters format (XX10YT=RR)")
     print("="*52 + "\n")
-    app.run(debug=True, port=5000, host="0.0.0.0")
+    app.run(debug=True, port=5001, host="0.0.0.0")

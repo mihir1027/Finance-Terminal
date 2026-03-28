@@ -1,0 +1,20 @@
+/* ── TOPBAR ── */
+#topbar{height:51px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;background:var(--bg2);border-bottom:1px solid var(--bdr);flex-shrink:0;z-index:200;position:relative;}
+#tb-left{display:flex;align-items:center;min-width:220px;position:relative;}
+.tb-hint{font-size:13px;color:var(--dim);white-space:nowrap;}
+.tb-hint b{color:#3d3d3d;font-weight:400;}
+#cli-inp{display:none;background:transparent;border:none;outline:none;color:#ffffff;font-family:var(--font);font-size:19px;caret-color:transparent;text-transform:uppercase;letter-spacing:.05em;width:240px;}
+#cli-inp.active{display:block;}
+#tb-cursor{display:none;width:13px;height:22px;background:#ffffff;position:absolute;top:50%;transform:translateY(-50%);animation:cur-blink 1s step-end infinite;}
+#tb-cursor.active{display:block;}
+@keyframes cur-blink{0%,100%{opacity:1}50%{opacity:0}}
+#cli-inp::placeholder{display:none;color:transparent;}
+#tb-prompt{color:var(--orange);font-size:22px;font-weight:900;margin-right:10px;flex-shrink:0;letter-spacing:-.02em;}
+.tb-right{display:flex;align-items:center;gap:20px;font-size:11px;}
+.tb-cmd{color:var(--text);cursor:pointer;letter-spacing:.06em;}
+.tb-cmd:hover{color:var(--orange);}
+#clock{letter-spacing:.04em;}
+.ldot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:ld 1.8s ease-in-out infinite;}
+@keyframes ld{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.65)}}
+.tbi{color:var(--dim);cursor:pointer;font-size:14px;line-height:1;}
+.tbi:hover{color:var(--text);}
