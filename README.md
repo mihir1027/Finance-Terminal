@@ -1,24 +1,9 @@
 # Finance Terminal
 
-A Bloomberg-style financial terminal that runs in your browser. Live quotes, charts, macro data, analyst estimates, SEC filings, prediction markets, and more.
+A Bloomberg-style financial terminal that runs in your browser. quotes, charts, macro data, analyst estimates, SEC filings, prediction markets, and more.
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue) ![Flask](https://img.shields.io/badge/Flask-backend-green) ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
----
-
-## Features
-
-- **Live Quotes** — Real-time stock, ETF, crypto, forex, and commodity prices with multi-provider fallback (Finnhub → Twelve Data → yfinance)
-- **Charts** — Interactive candlestick charts powered by TradingView Lightweight Charts
-- **Company Overview** — Description, fundamentals, earnings history, and valuation metrics
-- **Analyst Estimates** — Ratings, price targets, and consensus estimates
-- **SEC Filings** — Latest 10-K, 10-Q, and 8-K filings via EDGAR
-- **Macro Data** — World indices, global commodities, forex matrix, US Treasury yield curves
-- **News** — Per-ticker and market-wide news feed
-- **Prediction Markets** — Event contract prices
-- **CLI Macro Terminal** — Keyboard-driven commodity and yield curve viewer (`main.py`)
-
----
 
 ## Prerequisites
 
@@ -44,7 +29,7 @@ pip install -r requirements.txt
 
 ### 3. Get your API keys
 
-All services have free tiers — no payment required.
+All services have free tiers — no payment required. Good to have them all.
 
 | Variable | Where to get it |
 |---|---|
@@ -54,6 +39,12 @@ All services have free tiers — no payment required.
 | `MASSIVE_API_KEY` | Optional — leave blank if you don't have one |
 | `SEC_USER_AGENT` | Your name + email (e.g. `Jane Doe jane@example.com`) — required by the SEC to access EDGAR filings |
 
+      28 +TIINGO_API_KEY=               # tiingo.com — quote fallback + news                     
+      29 +ALPHA_VANTAGE_API_KEY=        # alphavantage.co — chart indicators + quote fallback    
+      30 +MARKETSTACK_API_KEY=          # marketstack.com — global equity fallback               
+      31 +EODHD_API_KEY=                # eodhd.com — global ticker fallback                     
+      32 +FIXER_API_KEY=                # fixer.io — historical forex rates                      
+      33 +MASSIVE_API_KEY=              # Very good to have
 ### 4. Configure your `.env` file
 
 Copy the template and fill in your keys:
@@ -76,12 +67,23 @@ Copy-Item .env.example .env
 Open `.env` in any text editor and replace the placeholder values:
 
 ```env
-FINNHUB_API_KEY=your_key_here
-TWELVE_DATA_API_KEY=your_key_here
-FRED_API_KEY=your_key_here
-FMP_API_KEY=your_key_here
-MASSIVE_API_KEY=              # leave blank if unused
-PROVIDER_VERBOSE=false
+
+  FINNHUB_API_KEY=your_key_here                                                                         
+  TWELVE_DATA_API_KEY=your_key_here                                                                     
+  PROVIDER_VERBOSE=true                                                                                 
+  FRED_API_KEY=your_key_here                                                                            
+  MASSIVE_API_KEY=your_key_here                                                                         
+  FMP_API_KEY=your_key_here
+  EIA_API_KEY=your_key_here
+  TIINGO_API_KEY=your_key_here                                                                          
+  ALPHA_VANTAGE_API_KEY=your_key_here
+  CURRENCY_LAYER_API_KEY=your_key_here                                                                  
+  MARKETSTACK_API_KEY=your_key_here
+  EODHD_API_KEY=your_key_here                                                                           
+  FIXER_API_KEY=your_key_here
+  USDA_FAS_API_KEY=your_key_here  
+
+
 ```
 
 > `.env` is listed in `.gitignore` — your keys are never committed or uploaded.
@@ -117,15 +119,6 @@ Use `F1`–`F5` to switch commodities. Shows US Treasury yield curves and CME fu
 
 ---
 
-## API Keys — Free Tier Limits
-
-| Provider | Free Tier |
-|---|---|
-| Finnhub | 60 requests/minute |
-| Twelve Data | 800 requests/day |
-| FRED | Unlimited (public data) |
-| FMP | 250 requests/day |
-| Binance | No key required (crypto data) |
 
 The app automatically falls back to the next provider if one fails or is rate-limited.
 
